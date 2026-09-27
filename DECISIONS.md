@@ -281,4 +281,5 @@ Each entry has the following fields:
   - *The owner pasting a GitHub token into chat.* Credential exposure.
   - *Developing directly in the owner's local VM.* It has Python 3.10 and no Docker or Postgres.
 - **Why.** One source of truth (git history) and small reviewable commits. The owner keeps control of the remote.
+- **Consequence found during setup.** Git must delete its own lock files in `.git/`. The folder bridge blocks deletes until the owner approves them once per session. Without that approval, git leaves stale `*.lock` files and the next command fails. When you push from Windows (GitHub Desktop or Git for Windows), you're unaffected.
 - **Revisit if.** The owner prefers giving CI-style access to a repo, e.g., a fine-grained token scoped to one repo, entered as a secret rather than in chat.

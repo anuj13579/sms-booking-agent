@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Node / dashboard
+node_modules/
+dashboard/dist/
+
+# Secrets: never commit
+.env
+.env.*
+!.env.example
+
+# Eval run outputs (summaries go in RESULTS.md)
+evals/runs/
+
+# Local sync bundles (see DECISIONS.md D-023)
+.sync/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

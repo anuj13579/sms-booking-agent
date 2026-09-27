@@ -1,0 +1,4 @@
+# Normalize line endings so Windows checkouts don't show spurious diffs
+* text=auto eol=lf
+*.svg text eol=lf
+*.png binary

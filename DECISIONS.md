@@ -64,7 +64,7 @@ Each entry has the following fields:
 - **Revisit if.** Never for bookings. Summaries might be added for long sessions if token cost demands it.
 
 ## D-006 · Integrity is enforced by Postgres constraints, not app checks
-*2026-09-26 · Phase 0 · Accepted*
+*2026-09-26 · Phase 0 · Accepted · Extended by D-026 (a per-technician lock for liveness, not correctness)*
 
 - **Context.** Double-booking must be impossible, not just unlikely, even with concurrent requests, webhook retries, and a misbehaving model.
 - **Decision.**
@@ -139,7 +139,7 @@ Each entry has the following fields:
 - **Revisit if.** The owner wants different policies, e.g., upset customers in notify mode.
 
 ## D-012 · Acknowledge webhooks fast; queue turns in Postgres
-*2026-09-26 · Phase 0 · Accepted*
+*2026-09-26 · Phase 0 · Accepted · Refined by D-024 (a lease replaces the held row lock)*
 
 - **Context.** Twilio expects a fast webhook response, and one agent turn can take several LLM calls. Messages must survive a process crash.
 - **Decision.** The webhook stores the message and returns 200 with empty TwiML immediately. A worker claims pending conversations with `SELECT … FOR UPDATE SKIP LOCKED`, processes each conversation serially (the row lock), batches rapid-fire texts into one turn, and replies via Twilio's REST API. Unprocessed messages are re-claimed after restarts.
@@ -283,3 +283,58 @@ Each entry has the following fields:
 - **Why.** One source of truth (git history) and small reviewable commits. The owner keeps control of the remote.
 - **Consequence found during setup.** Git must delete its own lock files in `.git/`. The folder bridge blocks deletes until the owner approves them once per session. Without that approval, git leaves stale `*.lock` files and the next command fails. When you push from Windows (GitHub Desktop or Git for Windows), you're unaffected.
 - **Revisit if.** The owner prefers giving CI-style access to a repo, e.g., a fine-grained token scoped to one repo, entered as a secret rather than in chat.
+
+## D-024 · Claim conversations with a lease, not a row lock held for the whole turn
+*2026-09-29 · Phase 1 · Accepted · Refines D-012*
+
+- **Context.** D-012 serialised each conversation with a row lock. A lock lives inside a transaction, so the transaction (and its pooled connection) would stay open for the whole agent turn: up to 45 s of LLM calls. It would also force every tool call in the turn into one transaction, so a booking made early in a turn could be rolled back by a failure later in it, after the model had already been told "booked".
+- **Decision.** `conversations` gets `lease_token` and `lease_until`. A worker claims a conversation in a short transaction (`FOR UPDATE SKIP LOCKED` to pick one, then write the lease), processes it with no transaction held open, and releases it by token. Before releasing, it takes up to three follow-up turns for texts that arrived mid-turn. A crashed worker's lease expires (120 s, well above the 45 s turn budget) and another worker takes over; its messages are still `received`. Each tool call commits on its own.
+- **Rejected.**
+  - *The row lock from D-012.* Long transactions, pinned connections, and all-or-nothing tool calls.
+  - *Advisory locks.* Session-scoped advisory locks are tied to a connection, which gives the same pinning problem.
+  - *A separate jobs table.* The pending messages already are the queue; a second table can disagree with them.
+- **Why.** Never hold a database transaction open across a network call to a third party. The lease makes "who is working on this" data, which is visible, debuggable, and expires on its own.
+- **Revisit if.** Turns ever need longer than the lease. Then renew the lease between LLM calls rather than raising the timeout.
+
+## D-025 · Handoff mode never times out, and never delays a safety message
+*2026-09-29 · Phase 1 · Accepted*
+
+- **Context.** Two edge cases the Phase 0 pipeline order left open. First, D-021 closes a conversation after 24 h idle, so a customer waiting a day for the owner would silently land back with the bot. Second, the DESIGN order put the handoff check before the emergency pre-filter, so a customer whose chat was already with the owner (say, over a price dispute) and who then wrote "now I smell gas" would get no safety text until the owner happened to look.
+- **Decision.** A conversation in `handoff` mode is exempt from the 24 h rollover; only the owner resolving its escalations returns it to the bot. The emergency pre-filter runs *before* the handoff gate, and before the opted-out gate too. A repeat of the same hazard in the same conversation doesn't resend the template or re-page the owner, and a new hazard does both.
+- **Rejected.** *Keeping the Phase 0 order.* "The bot is silent in handoff" was meant to stop the LLM talking over a human. A fixed, reviewed safety template isn't the LLM talking, and delaying it has no upside.
+- **Why.** Handoff means "a human owns this conversation", and that should end by a human decision, not a timer. Safety text should depend only on what the customer said, not on who currently owns the chat.
+- **Revisit if.** Owners forget to resolve handoffs and customers get stuck. Then add an owner reminder, not an automatic return to the bot.
+
+## D-026 · Writers queue per technician so exclusion-constraint races can't deadlock
+*2026-09-29 · Phase 1 · Accepted · Extends D-006*
+
+- **Context.** The race tests use a barrier so every transaction has found the window free before any of them writes; only the constraint can stop a double-booking. They found something the design missed. Unlike a unique index, an exclusion constraint has no special protocol for concurrent inserts: each inserter writes its row, then waits for any in-progress conflicting row to commit or abort. Two transactions whose uncommitted rows conflict wait on each other, and Postgres breaks the cycle only after `deadlock_timeout` (1 s) by aborting one. With eight writers on one technician this became 20 to 35 seconds of back-to-back deadlocks, and a loser could give up before anyone had committed.
+- **Decision.** Every booking write (create and reschedule) runs in a savepoint that first takes `SELECT … FOR NO KEY UPDATE` on the technician row. Writers for one technician now queue: the next one proceeds when the previous commits, sees its row, and gets a clean exclusion violation, which means "try the next technician". Deadlocks that still happen (from a future code path that skips the lock) are recognised by SQLSTATE `40P01`, roll back only the savepoint, and retry. A test forces that deadlock deterministically.
+- **Rejected.**
+  - *Retrying on deadlock alone.* Correct, but each retry costs a full second, and under contention the retries feed the next round of deadlocks.
+  - *SERIALIZABLE isolation or a per-business advisory lock.* They serialise far more than necessary.
+  - *`FOR UPDATE`.* It also conflicts with the `FOR KEY SHARE` lock every booking insert takes on the technician through its foreign key, adding waits that don't help.
+- **Why.** Correctness and liveness are separate problems. The constraint still makes double-booking impossible, and the lock only keeps writers from tripping over each other. D-006 rejected technician locks as the *correctness* mechanism because "every code path must remember the lock". That argument still holds; here, forgetting the lock costs latency, not correctness.
+- **Revisit if.** Booking write latency shows lock waits in production, which is unlikely at 1–10 technicians.
+
+## D-027 · Customer-facing text is GSM-7 only
+*2026-09-29 · Phase 1 · Accepted*
+
+- **Context.** One character outside the GSM-7 set (an en dash, a curly quote, an emoji) switches the whole SMS to UCS-2 encoding. A segment then carries 70 characters instead of 160, so the 480-character cap becomes 7 billed segments instead of 3. The Phase 0 examples used en dashes ("10am–12pm").
+- **Decision.** Time labels use an ASCII hyphen ("Tue Sep 29, 10am-12pm"). Every fixed template is tested for GSM-7 and the 480-character cap with a long owner and business name. The Phase 2 output guard adds the same check to the model's replies, normalising curly quotes and dashes first.
+- **Rejected.** *Ignoring encoding.* It quietly doubles SMS cost and is invisible in the web-chat simulator.
+- **Why.** On SMS, the character set is a billing decision.
+- **Revisit if.** The business needs non-English replies. Then budget for UCS-2 rather than mangling text.
+
+## D-028 · Keyword details: over-honour opt-outs, but a "yes" is not a resubscribe
+*2026-09-29 · Phase 1 · Accepted · Details D-020*
+
+- **Context.** D-020 fixed the keyword list. Implementing it raised four questions. Twilio's Advanced Opt-Out docs (checked 2026-09-29) confirm the eight opt-out keywords, list `START`, `UNSTOP`, and `YES` as opt-in and `HELP` and `INFO` as help, and mark only STOP, START/UNSTOP, and HELP as non-removable.
+- **Decision.**
+  - Surrounding whitespace and punctuation are ignored ("Stop.", "stop!!"). When unsure, we treat it as an opt-out.
+  - Opt-in keywords only count for an opted-out customer. A subscribed customer's "Yes" answers the agent's question and goes to the agent.
+  - An opted-out customer's other messages get no reply, but the owner is alerted so the lead isn't lost.
+  - An opted-out customer who reports an emergency gets no text, but the escalation and owner page still happen.
+- **Rejected.** *Treating YES as a keyword for everyone.* It would swallow the most common booking confirmation.
+- **Why.** Texting someone who asked us to stop is the worse error, so ambiguity resolves toward opting out. But opting out stops *texts*, not the business's duty to know a customer reported a gas leak.
+- **Revisit if.** Phase 5 confirms CANCEL can be removed from the list for this number (the docs suggest it can). Then "Cancel" alone could go to the agent as an appointment cancellation.

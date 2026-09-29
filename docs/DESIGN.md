@@ -1,6 +1,6 @@
 # SMS Booking Agent: Design (Phase 0)
 
-Status: draft for owner review · Date: 2026-09-26 · Decision IDs (D-xxx) refer to [`DECISIONS.md`](../DECISIONS.md)
+Status: Phase 0 design, updated with Phase 1 findings (2026-09-29) · Decision IDs (D-xxx) refer to [`DECISIONS.md`](../DECISIONS.md)
 
 ## 1. Problem and goals
 
@@ -42,8 +42,8 @@ flowchart LR
     WEB[Web-chat simulator] --> WC[Web-chat adapter]
     SIM["Eval harness (simulated customer)"] --> IP[In-process adapter]
   end
-  TW & WC & IP --> PIPE["Inbound pipeline<br/>dedupe · opt-out · handoff check<br/>emergency pre-filter"]
-  PIPE -->|needs agent| Q[("Postgres job queue<br/>FOR UPDATE SKIP LOCKED")]
+  TW & WC & IP --> PIPE["Inbound pipeline<br/>dedupe · keywords · emergency pre-filter<br/>opted-out and handoff gates"]
+  PIPE -->|needs agent| Q[("Postgres work queue<br/>SKIP LOCKED + lease")]
   Q --> AG["Agent loop<br/>max 6 steps / turn"]
   AG <-->|tool calling| LLM["LLM provider interface<br/>OpenAI-compatible adapter → DeepSeek"]
   AG --> EX["Tool executor<br/>Pydantic-validated, session-scoped"]
@@ -79,9 +79,8 @@ sequenceDiagram
   T->>W: POST /webhooks/twilio (X-Twilio-Signature)
   W->>D: insert message (UNIQUE provider SID → retries deduped)
   W-->>T: 200 + empty TwiML within ms
-  W->>D: enqueue conversation
-  P->>D: claim job, lock conversation row
-  P->>P: opt-out keyword? handed off? emergency pre-filter?
+  P->>D: claim conversation lease (SKIP LOCKED), load pending msgs
+  P->>P: keyword? emergency pre-filter? opted out? handed off?
   P->>A: run turn (all pending inbound msgs, batched)
   A->>D: load business, customer, upcoming bookings, session transcript
   A->>L: static system prompt + transcript + per-turn context + tools
@@ -91,18 +90,23 @@ sequenceDiagram
   L-->>A: reply text
   A->>A: output guard (no prices, ≤ 480 chars)
   A->>T: send SMS via REST API
-  T->>C: "I can do Tue 9/29 10am–12pm or 1–3pm. Which works?"
+  T->>C: "I can do Tue Sep 29 10am-12pm or 1-3pm. Which works?"
 ```
 
 The webhook acknowledges Twilio immediately and the agent runs asynchronously. One turn can take several LLM calls, which risks Twilio's webhook timeout. A process crash mid-turn cannot lose a message: the message row stays `received` until processed, and the queue re-claims it (D-012).
 
-**Pipeline order.** Each step can end the turn without an LLM call:
+**Pipeline order.** Each step can end the turn without an LLM call. The order changed in Phase 1: the emergency pre-filter now runs *before* the opted-out and handoff gates (D-025, D-028).
 
-1. **Dedupe.** A duplicate provider SID is ignored.
-2. **Opt-out keywords.** `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`, `OPTOUT`, and `REVOKE` as an exact single-word message, plus natural phrasings like "stop texting me", mark the customer opted out. `START` re-subscribes, and `HELP` returns fixed text. Opted-out customers get no bot messages (D-020).
-3. **Handoff check.** If a human owns the conversation, the message is stored and the owner is notified, with no bot reply.
-4. **Emergency pre-filter.** A keyword/regex match sends the fixed safety template for that hazard, escalates as `emergency` with handoff, and ends the turn. The pre-filter is tuned for recall (D-003, D-004).
-5. **Agent loop.** Runs only if steps 1–4 did not end the turn.
+1. **Dedupe.** A duplicate provider SID is ignored (unique index, so it holds under concurrent retries).
+2. **Keywords.** `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`, `OPTOUT`, and `REVOKE` as the whole message (case and surrounding punctuation ignored), plus natural phrasings like "stop texting me", mark the customer opted out and send one confirmation. `START`, `UNSTOP`, and `YES` re-subscribe, but only an opted-out customer: a subscribed customer's "Yes" is a booking confirmation and goes to the agent. `HELP` and `INFO` return fixed text (D-020, D-028).
+3. **Emergency pre-filter.** A keyword/regex match escalates as `emergency` with handoff, sends the fixed safety template for that hazard, and ends the turn. It runs even when a human already owns the conversation, and even for opted-out customers, who get no text but whose owner is paged. Tuned for recall (D-003, D-004).
+4. **Opted-out gate.** Other messages from an opted-out customer are marked `skipped`. No reply goes out, and the owner is alerted so the lead isn't lost.
+5. **Handoff gate.** If a human owns the conversation, the message is stored and the owner is notified, with no bot reply.
+6. **Agent loop.** Runs only if steps 1–5 did not end the turn. If it raises, the customer gets the fixed fallback text and the conversation escalates as `system_error`.
+
+A batch can mix these: "HELP" followed by "my AC is broken" gets the help text and an agent turn for the second message.
+
+**Claiming work** (D-024). A worker claims a conversation by writing a lease (token plus expiry) in a short transaction, processes it with no transaction held open across LLM calls, and releases the lease. Texts that arrive mid-turn get a follow-up turn before the release (up to three), so a customer who keeps typing is never left waiting on the poller. A crashed worker's lease simply expires. Each tool call commits on its own, so a booking that succeeded stays booked even if a later step of the turn fails.
 
 ## 4. Agent design
 
@@ -110,7 +114,7 @@ The webhook acknowledges Twilio immediately and the agent runs asynchronously. O
 
 | Tool | Arguments (LLM-supplied) | Server-side behavior |
 |---|---|---|
-| `get_availability` | `service_type`, `earliest_date`, `latest_date`, optional `part_of_day` | Returns ≤ 6 free windows, each with a slot id and a label like "Tue Sep 29, 10am–12pm" |
+| `get_availability` | `service_type`, `earliest_date`, `latest_date`, optional `part_of_day` | Returns ≤ 6 free windows, each with a slot id and a label like "Tue Sep 29, 10am-12pm" (ASCII hyphen, D-027) |
 | `create_booking` | `service_type`, `slot_start`, `customer_name`, `address`, `zip`, `problem_description`, `urgency` | Re-checks availability, assigns a technician, and inserts inside a transaction. Idempotent. |
 | `reschedule_booking` | `booking_ref`, `new_slot_start` | Moves the booking in place and writes an audit event |
 | `cancel_booking` | `booking_ref`, optional `reason` | Idempotent. Cancelling an already-cancelled booking returns `already_cancelled`. |
@@ -142,7 +146,7 @@ Off-topic chit-chat ("what's the weather?") gets a one-line redirect and **no** 
 - The session transcript, including earlier tool calls and results.
 - A per-turn context note. The note holds the current local date/time and a 14-day calendar ("Tue = 2026-09-29"), so the model looks dates up instead of computing them.
 
-A session ends after 24 hours of inactivity, which keeps the context short and stops stale offers from carrying over (D-021).
+A session ends after 24 hours of inactivity, which keeps the context short and stops stale offers from carrying over (D-021). A conversation in handoff mode never times out: it stays with the owner until they resolve the escalation (D-025).
 
 **Prompt layout for caching.** The static system prompt and business profile come first. Every turn only **appends** (context note → customer text → tool calls → reply), so earlier messages are never rewritten. DeepSeek caches prompt prefixes automatically, and cache-hit input costs about 2–3% of the cache-miss price. An append-only layout keeps most input tokens on the cheap path. Every LLM call logs `prompt_version` (a name plus a content hash) (D-015).
 
@@ -150,6 +154,7 @@ A session ends after 24 hours of inactivity, which keeps the context short and s
 
 - A currency/price regex (`$` + digits, "N dollars/bucks").
 - A length cap of 480 characters (3 SMS segments).
+- GSM-7 only (D-027). Every fixed template and time label is tested for it. Phase 2 adds the same check (with normalisation of curly quotes and dashes) to the model's output.
 
 On a violation, the model regenerates once with feedback. If it fails again, the customer gets a fixed fallback and the conversation escalates. More guards (for example, time-promise checks) are added only when evals show a real failure mode (D-016).
 
@@ -185,9 +190,11 @@ Draft templates (the business owner should review these before any real use):
 **Availability.** A window is available when all of the following hold:
 
 - It starts at least `min_lead` (default 2 h) from now.
-- It falls within `horizon` (default 14 days).
+- Its local date falls within `horizon` (default 14 days, counting today as day 1).
 - At least one active technician with the right trade has no time off overlapping it.
 - That technician has no confirmed booking overlapping it.
+
+The service must be `bookable`. Multi-visit jobs and jobs that need an estimate first (installs, panel upgrades) are not, and the agent routes them to the owner as a quote. The customer's ZIP must be in the business's service area.
 
 **Time zones** (D-009):
 
@@ -226,9 +233,11 @@ erDiagram
     string name
     string timezone "IANA, e.g. America/New_York"
     string sms_number "E.164, unique"
+    string owner_name "used in fixed texts"
     string owner_phone
     int min_lead_minutes
     int horizon_days
+    string service_area_zips "array"
   }
   TECHNICIAN {
     uuid id PK
@@ -263,21 +272,23 @@ erDiagram
     string channel "sms, webchat, eval"
     string mode "bot, handoff, closed"
     timestamptz last_activity_at
+    timestamptz lease_until "work lease (D-024)"
   }
   MESSAGE {
     uuid id PK
+    bigint seq "arrival order"
     uuid conversation_id FK
     string direction "in, out"
     string author "customer, agent, owner, system"
     string body
     string provider_sid "unique, dedupes webhook retries"
-    string status "received, processed, sent, failed, skipped"
+    string status "in: received, processed, skipped / out: queued, sent, failed"
   }
   ESCALATION {
     uuid id PK
     uuid conversation_id FK
     string reason
-    string hazard "gas, co, electrical, flooding, no_heat"
+    string hazard "gas, co, electrical, flooding, no_heat, other"
     string mode "handoff, notify"
     string status "open, acknowledged, resolved"
     string source "prefilter, agent, system"
@@ -296,7 +307,7 @@ erDiagram
   }
 ```
 
-Tables not expanded above are `service_types` (code, label, trade), `window_templates` (weekday, start_local, end_local), `technician_time_off` (tstzrange), `booking_events` (created/rescheduled/cancelled with old and new window and actor), `agent_turns` (trigger messages, steps, outcome, prompt version), and `tool_calls` (name, args, result, status, latency).
+Tables not expanded above are `service_types` (code, label, trade, bookable), `window_templates` (weekday, start_local, end_local), `technician_time_off` (tstzrange), `booking_events` (created/rescheduled/cancelled with old and new window and actor), `agent_turns` (trigger messages, steps, outcome, prompt version), and `tool_calls` (name, args, result, status, latency). The Phase 1 migration creates everything except `agent_turns`, `llm_calls`, and `tool_calls`, which arrive with the agent loop in Phase 2.
 
 **Integrity rules enforced by Postgres, not app code** (D-006):
 
@@ -304,8 +315,11 @@ Tables not expanded above are `service_types` (code, label, trade), `window_temp
 - `bookings`: partial unique index on `(customer_id, service_type_id, lower(time_window)) WHERE status = 'confirmed'`. A repeated `create_booking` for the same customer, service, and window returns the existing booking instead of creating a second one. This is idempotency by natural key.
 - `messages.provider_sid` is UNIQUE, so Twilio webhook retries are no-ops.
 - `customers (business_id, phone_e164)` is UNIQUE.
+- `conversations`: partial unique index on `(customer_id, channel) WHERE mode <> 'closed'`, so two simultaneous first texts from a new number open one conversation.
 
-Concurrent races: when two customers book the last window, one insert hits the exclusion constraint. The service catches it and tries the next qualified technician. If none is free, it returns `slot_unavailable` with alternatives. READ COMMITTED is enough because the constraint does the serialization. Phase 1 includes a concurrency test that fires simultaneous bookings with `asyncio.gather`.
+Concurrent races: when two customers book the last window, one insert hits the exclusion constraint. The service catches it and tries the next qualified technician. If none is free, it returns `slot_unavailable` with alternatives. READ COMMITTED is enough because the constraint does the serialization.
+
+The Phase 1 race tests (a barrier makes every transaction find the window free before any of them writes) found one thing the design missed: several transactions inserting mutually conflicting rows can **deadlock** under an exclusion constraint, and Postgres only breaks each cycle after `deadlock_timeout` (1 s). With eight writers on one technician this became 20 to 35 seconds of back-to-back deadlocks. Writers now take a `FOR NO KEY UPDATE` lock on the technician row inside the write's savepoint, so they queue instead of deadlocking. The lock is for liveness only; the constraint remains the guarantee, and a deadlock that still happens is caught and retried (D-026).
 
 ## 8. LLM provider and cost
 
@@ -388,7 +402,7 @@ These choices are set now because they shape the schema and logging (D-018):
 6. **Same-family judge.** With one provider, the judge is a DeepSeek model grading DeepSeek. This is mitigated by narrow binary rubrics and human-label calibration, and it is reported as a limitation.
 7. **Safety templates** are drafts written by an engineer, not reviewed by a safety professional.
 
-## 11. Planned repo layout
+## 11. Repo layout
 
 ```
 app/
@@ -408,4 +422,4 @@ DECISIONS.md · RESULTS.md (Phase 4) · README.md
 docker-compose.yml · Dockerfile · .env.example
 ```
 
-`app/domain` must not import from `app/agent`. That rule enforces "the system works with zero AI in it", and a test will check it.
+`app/domain` must not import from `app/agent`, `app/pipeline`, or any LLM or HTTP client. That rule enforces "the system works with zero AI in it", and `tests/test_architecture.py` checks it on every run. `app/pipeline` owns the agent *port* (a Protocol) and may not import the agent implementation either.

@@ -66,13 +66,23 @@ def _clock_parts(t: time) -> tuple[str, str]:
     return text, meridiem
 
 
+def span_label(start: time, end: time) -> str:
+    """``10am-12pm``; ``1-3pm`` when both ends share am/pm."""
+    s_text, s_mer = _clock_parts(start)
+    e_text, e_mer = _clock_parts(end)
+    return f"{s_text}-{e_text}{e_mer}" if s_mer == e_mer else f"{s_text}{s_mer}-{e_text}{e_mer}"
+
+
+def clock_label(t: time) -> str:
+    """``3:05pm``, ``10am``."""
+    text, meridiem = _clock_parts(t)
+    return text + meridiem
+
+
 def window_label(start: datetime, end: datetime, tz: ZoneInfo) -> str:
     """``Tue Sep 29, 10am-12pm``; ``Tue Sep 29, 1-3pm`` when both ends share am/pm."""
     local_start, local_end = to_local(start, tz), to_local(end, tz)
-    s_text, s_mer = _clock_parts(local_start.time())
-    e_text, e_mer = _clock_parts(local_end.time())
-    span = f"{s_text}-{e_text}{e_mer}" if s_mer == e_mer else f"{s_text}{s_mer}-{e_text}{e_mer}"
-    return f"{day_label(local_start.date())}, {span}"
+    return f"{day_label(local_start.date())}, {span_label(local_start.time(), local_end.time())}"
 
 
 def slot_id(start: datetime, tz: ZoneInfo) -> str:

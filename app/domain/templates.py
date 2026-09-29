@@ -1,8 +1,8 @@
 """Fixed customer-facing texts. None of these is ever written by the LLM (D-003).
 
-Every template must be GSM-7 and fit the 480-character cap; tests/test_templates.py enforces
-both. The safety wording is an engineer's draft and must be reviewed before real use
-(DESIGN section 10, risk 7).
+Every template must be GSM-7 and fit three SMS segments (see app/domain/sms.py);
+tests/test_templates.py enforces both. The safety wording is an engineer's draft and must be
+reviewed before real use (DESIGN section 10, risk 7).
 """
 
 from app.domain.enums import Hazard

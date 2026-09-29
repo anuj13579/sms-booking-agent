@@ -203,6 +203,36 @@ async def process_conversation(
         # Another worker has it. It will see this message before releasing (follow-up turns),
         # or the poller will.
         return TurnOutcome(conversation_id, HandledBy.BUSY)
+    return await _run_leased(sessionmaker, conversation_id, token, agent, notifier, clock)
+
+
+async def process_next(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    agent: TurnAgent,
+    notifier: OwnerNotifier,
+    clock: Clock,
+    lease: timedelta = DEFAULT_LEASE,
+) -> TurnOutcome | None:
+    """The queue poller's step: claim the conversation with the oldest unhandled message and
+    process it. None when there is nothing to do. This is how messages left behind by a crashed
+    worker (its lease expired) get answered."""
+    async with sessionmaker() as session, session.begin():
+        claimed = await queue.claim_next(session, clock.now(), lease)
+    if claimed is None:
+        return None
+    conversation_id, token = claimed
+    return await _run_leased(sessionmaker, conversation_id, token, agent, notifier, clock)
+
+
+async def _run_leased(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    conversation_id: uuid.UUID,
+    token: uuid.UUID,
+    agent: TurnAgent,
+    notifier: OwnerNotifier,
+    clock: Clock,
+) -> TurnOutcome:
     try:
         outcome = await _process_claimed(sessionmaker, conversation_id, agent, notifier, clock)
         for _ in range(MAX_FOLLOW_UP_TURNS):

@@ -223,3 +223,8 @@ def test_factory_turns_thinking_off_for_deepseek_only() -> None:
 
     local = make_provider(Settings(llm_base_url="http://localhost:8000/v1"))
     assert "thinking" not in local.request_body("m", MESSAGES, TOOLS, "auto")
+
+
+def test_blank_key_counts_as_missing() -> None:
+    assert Settings(llm_api_key="  ").llm_key is None
+    assert Settings(llm_api_key="sk-x").llm_key == "sk-x"

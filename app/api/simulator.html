@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMS Simulator</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --surface: #ffffff; --surface-2: #eef0f3; --text: #1c2330; --muted: #5d6675;
+    --border: #d9dde3; --accent: #1f6feb; --accent-text: #ffffff; --ok: #1a7f37; --warn: #9a6700;
+    --bad: #cf222e; --bubble-in: #1f6feb; --bubble-out: #e9ecf0; --code: #f3f4f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --surface: #171b21; --surface-2: #1f242c; --text: #e6e9ee; --muted: #9aa4b2;
+      --border: #2c333d; --accent: #4c8dff; --accent-text: #0b0e12; --ok: #3fb950; --warn: #d29922;
+      --bad: #f85149; --bubble-in: #2f6fe0; --bubble-out: #232a33; --code: #12161b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
+    padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  .chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2);
+    color: var(--muted); border: 1px solid var(--border); white-space: nowrap;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .chip.bad { color: var(--bad); border-color: var(--bad); }
+  main { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 16px; padding: 16px;
+    max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .phone { background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    display: flex; flex-direction: column; height: calc(100vh - 96px); min-height: 480px; }
+  .phone-top { display: flex; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border);
+    align-items: center; }
+  .phone-top input { flex: 1; min-width: 0; }
+  input, textarea, button { font: inherit; color: var(--text); }
+  input, textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 10px; }
+  button { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .thread { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .empty { color: var(--muted); text-align: center; margin: auto; max-width: 260px; }
+  .msg { max-width: 82%; display: flex; flex-direction: column; }
+  .msg.in { align-self: flex-end; align-items: flex-end; }
+  .msg.out { align-self: flex-start; align-items: flex-start; }
+  .bubble { padding: 8px 12px; border-radius: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.in .bubble { background: var(--bubble-in); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.out .bubble { background: var(--bubble-out); border-bottom-left-radius: 4px; }
+  .msg.system .bubble { border: 1px dashed var(--muted); }
+  .meta { font-size: 11px; color: var(--muted); margin: 2px 6px 0; }
+  .typing .bubble { color: var(--muted); font-style: italic; }
+  form.composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+  form.composer textarea { flex: 1; resize: none; min-height: 40px; }
+  .hint { font-size: 11px; color: var(--muted); padding: 0 12px 10px; }
+  .inspector { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .phone { min-width: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+    margin: 0 0 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+    background: var(--surface-2); border: 1px solid var(--border); }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .badge.bad { color: var(--bad); border-color: var(--bad); }
+  .stat { color: var(--muted); font-size: 12px; }
+  .stat b { color: var(--text); font-weight: 600; }
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .item .top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .item .sub { color: var(--muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+  .none { color: var(--muted); font-size: 13px; }
+  details { border: 1px solid var(--border); border-radius: 8px; }
+  details + details { margin-top: 8px; }
+  summary { cursor: pointer; padding: 8px 10px; display: flex; flex-wrap: wrap; gap: 6px 10px;
+    align-items: center; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "\25B8"; color: var(--muted); }
+  details[open] summary::before { content: "\25BE"; }
+  .turn-body { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .tool { border-left: 3px solid var(--border); padding-left: 10px; }
+  .tool.ok { border-color: var(--ok); } .tool.error, .tool.invalid { border-color: var(--warn); }
+  .tool.exception { border-color: var(--bad); } .tool.skipped { border-color: var(--muted); }
+  pre { margin: 4px 0 0; background: var(--code); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  .err { color: var(--bad); font-size: 12px; }
+  .table-wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SMS simulator</h1>
+  <span class="chip" id="business">loading...</span>
+  <span class="chip" id="model"></span>
+  <span class="chip" id="prompt"></span>
+  <span class="chip bad" id="nokey" hidden>No LLM API key: every turn will fall back</span>
+</header>
+<main>
+  <section class="phone" aria-label="Customer phone">
+    <div class="phone-top">
+      <input id="phone" aria-label="Customer phone number" autocomplete="off">
+      <button id="new" type="button" title="Start over as a brand-new customer">New customer</button>
+    </div>
+    <div class="thread" id="thread" aria-live="polite"></div>
+    <form class="composer" id="composer">
+      <textarea id="text" rows="2" placeholder="Text as the customer..." aria-label="Message"></textarea>
+      <button class="primary" id="send" type="submit">Send</button>
+    </form>
+    <div class="hint">Enter sends, Shift+Enter adds a line. Replies go through the real pipeline and agent.</div>
+  </section>
+  <section class="inspector" aria-label="What the agent did">
+    <div class="card">
+      <h2>Conversation</h2>
+      <div class="row" id="status"><span class="none">No messages yet.</span></div>
+    </div>
+    <div class="card"><h2>Bookings</h2><div class="list" id="bookings"></div></div>
+    <div class="card"><h2>Escalations</h2><div class="list" id="escalations"></div></div>
+    <div class="card"><h2>Agent turns</h2><div id="turns"></div></div>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  };
+  const store = {
+    get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+    set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } },
+  };
+
+  // GSM-7 segment math, mirroring app/domain/sms.py, so the page shows what SMS would bill.
+  const GSM7 = new Set(("@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
+    "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà").split(""));
+  const GSM7_EXT = new Set("^{}\\[~]|€\f".split(""));
+  function segments(text) {
+    const chars = Array.from(text);
+    const gsm = chars.every((c) => GSM7.has(c) || GSM7_EXT.has(c));
+    const units = gsm ? chars.reduce((n, c) => n + (GSM7_EXT.has(c) ? 2 : 1), 0) : text.length;
+    const [single, concat] = gsm ? [160, 153] : [70, 67];
+    const count = units <= single ? 1 : Math.ceil(units / concat);
+    return { count, gsm };
+  }
+
+  const randomPhone = () => "+1555010" + String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+  let phone = store.get("sim.phone") || randomPhone();
+  let sending = false;
+  let lastState = "";
+  const openTurns = new Set();
+
+  $("phone").value = phone;
+  $("phone").addEventListener("change", () => {
+    phone = $("phone").value.trim();
+    store.set("sim.phone", phone);
+    lastState = "";
+    refresh();
+  });
+  $("new").addEventListener("click", () => {
+    phone = randomPhone();
+    $("phone").value = phone;
+    store.set("sim.phone", phone);
+    lastState = "";
+    openTurns.clear();
+    refresh();
+    $("text").focus();
+  });
+  $("text").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      $("composer").requestSubmit();
+    }
+  });
+
+  async function api(path, options) {
+    const response = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      ...options,
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = Array.isArray(body.detail) ? body.detail.map((d) => d.msg).join("; ") : body.detail;
+      throw new Error(detail || `HTTP ${response.status}`);
+    }
+    return body;
+  }
+
+  $("composer").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = $("text").value.trim();
+    if (!text || sending) return;
+    sending = true;
+    $("send").disabled = true;
+    $("text").value = "";
+    appendPending(text);
+    try {
+      await api("/api/sim/messages", { method: "POST", body: JSON.stringify({ phone, body: text }) });
+    } catch (error) {
+      showError(error.message);
+    } finally {
+      sending = false;
+      $("send").disabled = false;
+      lastState = "";
+      await refresh();
+      $("text").focus();
+    }
+  });
+
+  function appendPending(text) {
+    const thread = $("thread");
+    if (thread.querySelector(".empty")) thread.textContent = "";
+    const mine = el("div", "msg in");
+    mine.append(el("div", "bubble", text));
+    const typing = el("div", "msg out typing");
+    typing.append(el("div", "bubble", "..."));
+    thread.append(mine, typing);
+    thread.scrollTop = thread.scrollHeight;
+  }
+
+  function showError(message) {
+    const thread = $("thread");
+    const note = el("div", "msg out");
+    note.append(el("div", "err", "Error: " + message));
+    thread.append(note);
+    thread.scrollTop = thread.scrollHeight;
+  }
+
+  const AUTHOR_LABEL = { system: "Automatic message", owner: "Owner", agent: "Agent" };
+
+  function renderThread(state) {
+    const thread = $("thread");
+    thread.textContent = "";
+    if (!state.messages || state.messages.length === 0) {
+      thread.append(el("div", "empty",
+        "Text the business as a customer. Try: \"my AC is blowing warm air, can someone come tomorrow?\""));
+      return;
+    }
+    for (const m of state.messages) {
+      const wrap = el("div", `msg ${m.direction} ${m.author}`);
+      wrap.append(el("div", "bubble", m.body));
+      const bits = [];
+      if (m.direction === "out") {
+        bits.push(AUTHOR_LABEL[m.author] || m.author);
+        const seg = segments(m.body);
+        bits.push(`${seg.count} SMS segment${seg.count === 1 ? "" : "s"}${seg.gsm ? "" : " (UCS-2!)"}`);
+      } else if (m.status === "skipped") {
+        bits.push("not answered: customer opted out");
+      } else if (m.status === "received") {
+        bits.push("waiting for a worker");
+      }
+      if (bits.length) wrap.append(el("div", "meta", bits.join(" · ")));
+      thread.append(wrap);
+    }
+    thread.scrollTop = thread.scrollHeight;
+  }
+
+  function badge(text, tone) { return el("span", `badge ${tone || ""}`, text); }
+
+  function renderStatus(state) {
+    const box = $("status");
+    box.textContent = "";
+    if (!state.conversation) {
+      box.append(el("span", "none", "No messages yet."));
+      return;
+    }
+    const mode = state.conversation.mode;
+    box.append(mode === "bot" ? badge("Agent is replying", "ok")
+      : mode === "handoff" ? badge("Owner has this conversation", "warn") : badge(mode));
+    if (state.customer && state.customer.opted_out) box.append(badge("Opted out (STOP)", "bad"));
+    if (mode === "handoff") {
+      const button = el("button", "", "Resolve as owner, hand back to agent");
+      button.type = "button";
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try { await api("/api/sim/resolve", { method: "POST", body: JSON.stringify({ phone }) }); }
+        catch (error) { showError(error.message); }
+        lastState = "";
+        refresh();
+      });
+      box.append(button);
+    }
+    const t = state.totals;
+    const stat = el("span", "stat");
+    stat.append("Cost ", el("b", "", "$" + Number(t.cost_usd).toFixed(5)), ` · ${t.llm_calls} LLM calls · `,
+      el("b", "", t.input_tokens.toLocaleString()), " in (",
+      el("b", "", t.cache_hit_tokens.toLocaleString()), " cached) · ",
+      el("b", "", t.output_tokens.toLocaleString()), " out");
+    box.append(stat);
+    if (state.customer && (state.customer.name || state.customer.address)) {
+      box.append(el("span", "stat",
+        "On file: " + [state.customer.name, state.customer.address, state.customer.zip].filter(Boolean).join(", ")));
+    }
+  }
+
+  function renderBookings(state) {
+    const box = $("bookings");
+    box.textContent = "";
+    const list = state.bookings || [];
+    if (!list.length) { box.append(el("div", "none", "None.")); return; }
+    for (const b of list) {
+      const item = el("div", "item");
+      const top = el("div", "top");
+      top.append(el("b", "", b.window), badge(b.status, b.status === "confirmed" ? "ok" : ""), el("span", "stat", "ref " + b.ref));
+      item.append(top, el("div", "sub", `${b.service} at ${b.address}`));
+      box.append(item);
+    }
+  }
+
+  function renderEscalations(state) {
+    const box = $("escalations");
+    box.textContent = "";
+    const list = state.escalations || [];
+    if (!list.length) { box.append(el("div", "none", "None.")); return; }
+    for (const e of list) {
+      const item = el("div", "item");
+      const top = el("div", "top");
+      const tone = e.reason === "emergency" ? "bad" : e.mode === "handoff" ? "warn" : "";
+      top.append(badge(e.reason + (e.hazard ? ` (${e.hazard})` : ""), tone), badge(e.mode),
+        badge(e.status, e.status === "resolved" ? "ok" : ""), el("span", "stat", "from " + e.source));
+      item.append(top, el("div", "sub", e.summary));
+      box.append(item);
+    }
+  }
+
+  const OUTCOME_TONE = { replied: "ok", handed_off: "warn" };
+
+  function renderTurns(state) {
+    const box = $("turns");
+    box.textContent = "";
+    const turns = (state.turns || []).slice().reverse();
+    if (!turns.length) { box.append(el("div", "none", "The agent hasn't run yet.")); return; }
+    turns.forEach((turn, index) => {
+      const number = turns.length - index;
+      const details = el("details");
+      details.open = openTurns.has(turn.id) || (index === 0 && openTurns.size === 0);
+      details.addEventListener("toggle", () => {
+        if (details.open) openTurns.add(turn.id); else openTurns.delete(turn.id);
+      });
+      const summary = el("summary");
+      summary.append(el("b", "", `Turn ${number}`),
+        badge(turn.outcome || "running", OUTCOME_TONE[turn.outcome] || (turn.outcome ? "bad" : "")),
+        el("span", "stat", `${turn.llm_calls.length} LLM call${turn.llm_calls.length === 1 ? "" : "s"}`),
+        el("span", "stat", turn.latency_ms != null ? (turn.latency_ms / 1000).toFixed(1) + "s" : ""),
+        el("span", "stat", "$" + Number(turn.cost_usd).toFixed(6)),
+        el("span", "stat", `${turn.input_tokens.toLocaleString()} in / ${turn.cache_hit_tokens.toLocaleString()} cached / ${turn.output_tokens.toLocaleString()} out`));
+      details.append(summary);
+
+      const body = el("div", "turn-body");
+      if (turn.error) body.append(el("div", "err", turn.error));
+      for (const t of turn.tool_calls) {
+        const tool = el("div", `tool ${t.status}`);
+        const top = el("div", "top row");
+        top.append(el("b", "", t.name), badge(t.status, t.status === "ok" ? "ok" : t.status === "exception" ? "bad" : "warn"),
+          el("span", "stat", t.latency_ms + " ms"));
+        tool.append(top, el("div", "stat", "arguments"), el("pre", "", JSON.stringify(t.arguments, null, 2)),
+          el("div", "stat", "result"), el("pre", "", JSON.stringify(t.result, null, 2)));
+        body.append(tool);
+      }
+      if (!turn.tool_calls.length) body.append(el("div", "none", "No tool calls."));
+      const wrap = el("div", "table-wrap");
+      const table = el("table");
+      const head = el("tr");
+      ["step", "try", "in", "cached", "out", "ms", "cost", "finish"].forEach((h) => head.append(el("th", "", h)));
+      table.append(head);
+      for (const c of turn.llm_calls) {
+        const row = el("tr");
+        [c.step, c.attempt, c.input_tokens, c.cache_hit_tokens, c.output_tokens, c.latency_ms,
+          "$" + Number(c.cost_usd).toFixed(6), c.error ? "error: " + c.error : c.finish_reason]
+          .forEach((v) => row.append(el("td", "", v)));
+        table.append(row);
+      }
+      wrap.append(table);
+      body.append(wrap, el("div", "stat", `${turn.model} · ${turn.prompt_version}`));
+      details.append(body);
+      box.append(details);
+    });
+  }
+
+  async function refresh() {
+    if (!phone) return;
+    let state;
+    try {
+      state = await api("/api/sim/state?phone=" + encodeURIComponent(phone));
+    } catch (error) {
+      if (!sending) { $("thread").textContent = ""; showError(error.message); }
+      return;
+    }
+    const serialized = JSON.stringify(state);
+    if (serialized === lastState || sending) return;
+    lastState = serialized;
+    renderThread(state);
+    renderStatus(state);
+    renderBookings(state);
+    renderEscalations(state);
+    renderTurns(state);
+  }
+
+  async function loadInfo() {
+    try {
+      const info = await api("/api/sim/info");
+      $("business").textContent = `${info.business} · owner ${info.owner} · ${info.timezone}`;
+      $("model").textContent = "model " + info.model;
+      $("prompt").textContent = info.prompt_version;
+      $("nokey").hidden = info.api_key_configured;
+    } catch (error) {
+      $("business").textContent = error.message;
+      $("business").classList.add("bad");
+    }
+  }
+
+  loadInfo();
+  refresh();
+  setInterval(() => { if (document.visibilityState === "visible" && !sending) refresh(); }, 3000);
+})();
+</script>
+</body>
+</html>

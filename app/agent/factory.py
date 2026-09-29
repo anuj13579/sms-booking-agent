@@ -19,10 +19,9 @@ def make_provider(settings: Settings) -> OpenAICompatibleProvider:
     if is_deepseek(settings.llm_base_url):
         # V4 models think by default. Non-thinking is the agent default (DESIGN section 8).
         extra_body["thinking"] = {"type": "enabled" if settings.llm_thinking else "disabled"}
-    key = settings.llm_api_key.get_secret_value() if settings.llm_api_key else None
     return OpenAICompatibleProvider(
         base_url=settings.llm_base_url,
-        api_key=key,
+        api_key=settings.llm_key,
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
         extra_body=extra_body,

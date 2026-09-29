@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     llm_temperature: float | None = 0.3
     llm_max_tokens: int = 1024
 
+    @property
+    def llm_key(self) -> str | None:
+        """The API key, or None when unset or blank (``DEEPSEEK_API_KEY=`` in .env)."""
+        value = self.llm_api_key.get_secret_value().strip() if self.llm_api_key else ""
+        return value or None
+
     # Agent loop limits (DESIGN section 4).
     agent_max_steps: int = 6
     agent_turn_budget_seconds: float = 45.0

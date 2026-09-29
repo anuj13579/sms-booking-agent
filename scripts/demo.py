@@ -1,4 +1,4 @@
-"""Phase 1 walkthrough against your local database, with no LLM involved.
+"""Walkthrough of the deterministic core against your local database, with no LLM involved.
 
     docker compose up -d
     uv run alembic upgrade head
@@ -27,9 +27,12 @@ from app.pipeline.inbound import AgentTurnInput, AgentTurnOutput, handle_inbound
 from app.seed import seed_brightwater
 
 
-class NoAgentYet:
+class NoLLM:
+    """Stands in for the agent: this demo shows what works with no model at all. To talk to the
+    real agent, run the web-chat simulator (see README)."""
+
     async def run_turn(self, turn: AgentTurnInput) -> AgentTurnOutput:
-        return AgentTurnOutput("(Phase 2: the agent would answer here)")
+        return AgentTurnOutput("(the LLM agent would answer here)")
 
 
 async def main() -> None:
@@ -79,7 +82,7 @@ async def main() -> None:
             channel=Channel.WEBCHAT,
             from_number=phone,
             body=text,
-            agent=NoAgentYet(),
+            agent=NoLLM(),
             notifier=notifier,
             clock=clock,
         )

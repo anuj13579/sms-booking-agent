@@ -7,11 +7,14 @@ requires-python = ">=3.11"
 dependencies = [
     "alembic>=1.16",
     "asyncpg>=0.30",
+    "fastapi>=0.115",
+    "httpx>=0.28",
     "pydantic>=2.11",
     "pydantic-settings>=2.10",
     "sqlalchemy[asyncio]>=2.0.40",
     # zoneinfo needs the IANA database; Windows has no system copy.
     "tzdata>=2025.2",
+    "uvicorn>=0.34",
 ]
 
 [dependency-groups]

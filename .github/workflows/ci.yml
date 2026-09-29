@@ -29,9 +29,9 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://booking:booking@localhost:5432/booking_agent_test
       TEST_DATABASE_URL: postgresql+asyncpg://booking:booking@localhost:5432/booking_agent_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.12"
           enable-cache: true

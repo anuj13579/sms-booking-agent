@@ -154,14 +154,19 @@ async def pending_inbound(session: AsyncSession, conversation_id: uuid.UUID) -> 
 
 
 async def mark_inbound(
-    session: AsyncSession, message_ids: Sequence[uuid.UUID], status: MessageStatus, now: datetime
+    session: AsyncSession,
+    message_ids: Sequence[uuid.UUID],
+    status: MessageStatus,
+    now: datetime,
+    *,
+    agent_turn_id: uuid.UUID | None = None,
 ) -> None:
     if not message_ids:
         return
     await session.execute(
         update(Message)
         .where(Message.id.in_(message_ids), Message.status == MessageStatus.RECEIVED)
-        .values(status=status, processed_at=now)
+        .values(status=status, processed_at=now, agent_turn_id=agent_turn_id)
         .execution_options(synchronize_session=False)
     )
 

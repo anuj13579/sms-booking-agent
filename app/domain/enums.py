@@ -102,6 +102,27 @@ class EscalationSource(StrEnum):
     SYSTEM = "system"  # server-raised (loop limits, guard failures)
 
 
+class AgentTurnOutcome(StrEnum):
+    """How an agent turn ended. NULL in the database while the turn is still running (or if the
+    worker died mid-turn)."""
+
+    REPLIED = "replied"  # the model wrote a reply that passed the output guard
+    HANDED_OFF = "handed_off"  # the model escalated in handoff mode; a fixed template went out
+    GUARD_FAILED = "guard_failed"  # the reply failed the output guard twice
+    STEP_LIMIT = "step_limit"  # no reply within the LLM-call budget
+    TIME_LIMIT = "time_limit"  # no reply within the wall-clock budget
+    LLM_ERROR = "llm_error"  # the provider failed, even after a retry
+    ERROR = "error"  # an unexpected exception
+
+
+class ToolCallStatus(StrEnum):
+    OK = "ok"
+    ERROR = "error"  # a domain failure returned to the model as data (slot_unavailable, ...)
+    INVALID = "invalid"  # unknown tool or arguments that failed validation
+    SKIPPED = "skipped"  # not executed: a handoff escalation in the same response took priority
+    EXCEPTION = "exception"  # an unexpected crash; the model sees a generic error
+
+
 class Hazard(StrEnum):
     """Ordered from most to least severe; the pre-filter reports the first that matches."""
 

@@ -2,6 +2,10 @@
 
 tests/test_schema.py fails if the two drift apart.
 
+The agent's own tables (``agent_turns``, ``llm_calls``, ``tool_calls``) are an audit log: what the
+model saw, what it called, what it cost. The eval harness reads cost and latency from the same
+rows production writes (DESIGN section 9).
+
 Integrity rules that must hold no matter which code path writes (D-006) are declared here as
 constraints, not checked in application code:
 
@@ -16,6 +20,7 @@ constraints, not checked in application code:
 
 import uuid
 from datetime import datetime, time
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -26,6 +31,7 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    Numeric,
     SmallInteger,
     Text,
     Time,
@@ -33,12 +39,20 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSTZRANGE, ExcludeConstraint, Range
+from sqlalchemy.dialects.postgresql import (
+    ARRAY,
+    JSONB,
+    TSTZRANGE,
+    UUID,
+    ExcludeConstraint,
+    Range,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.domain.enums import (
     Actor,
+    AgentTurnOutcome,
     BookingEventType,
     BookingStatus,
     Channel,
@@ -51,6 +65,7 @@ from app.domain.enums import (
     MessageAuthor,
     MessageDirection,
     MessageStatus,
+    ToolCallStatus,
     Trade,
     Urgency,
     sql_in,
@@ -312,6 +327,12 @@ class Message(Base):
     status: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column()
     processed_at: Mapped[datetime | None] = mapped_column()
+    # The agent turn that consumed this inbound message or wrote this reply. NULL for messages
+    # the agent never saw as they happened (keyword replies, safety templates, owner texts);
+    # the next turn shows those to the model as "since your last reply" events.
+    agent_turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="SET NULL"), index=True
+    )
 
 
 class Escalation(Base):
@@ -344,3 +365,92 @@ class Escalation(Base):
     summary: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column()
     resolved_at: Mapped[datetime | None] = mapped_column()
+
+
+class AgentTurn(Base):
+    """One run of the agent loop over a batch of customer messages.
+
+    ``messages`` holds exactly what this turn appended to the model's transcript (context note,
+    customer text, tool calls, tool results, the reply). The next turn's prompt is the system
+    prompt followed by every earlier turn's ``messages`` unchanged, so the prompt only ever grows
+    at the end and the provider's prefix cache keeps hitting (D-015).
+    """
+
+    __tablename__ = "agent_turns"
+    __table_args__ = (
+        CheckConstraint(
+            f"outcome IS NULL OR outcome IN ({sql_in(AgentTurnOutcome)})", name="outcome_valid"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # Transcript order. started_at can tie under a frozen eval clock.
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), unique=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+    )
+    trigger_message_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)))
+    # Every message up to this seq was either shown to this turn or already in the transcript.
+    max_message_seq: Mapped[int] = mapped_column(BigInteger)
+    model: Mapped[str] = mapped_column(Text)
+    prompt_version: Mapped[str] = mapped_column(Text)
+    outcome: Mapped[str | None] = mapped_column(Text)
+    reply: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    messages: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    started_at: Mapped[datetime] = mapped_column()
+    finished_at: Mapped[datetime | None] = mapped_column()
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+
+
+class LLMCall(Base):
+    """One request to the LLM provider, successful or not. Cost is computed at call time from the
+    price table in ``app/agent/providers/pricing.py``."""
+
+    __tablename__ = "llm_calls"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    turn_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="CASCADE"), index=True
+    )
+    step: Mapped[int] = mapped_column(SmallInteger)  # 1-based LLM step within the turn
+    attempt: Mapped[int] = mapped_column(SmallInteger)  # 2 = the retry after a failed call
+    model: Mapped[str] = mapped_column(Text)
+    prompt_version: Mapped[str] = mapped_column(Text)
+    input_tokens: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    cache_hit_tokens: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    output_tokens: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    reasoning_tokens: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(14, 10), server_default=text("0"))
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    finish_reason: Mapped[str | None] = mapped_column(Text)
+    content: Mapped[str | None] = mapped_column(Text)
+    tool_calls: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created_at()  # real wall time: it decides peak pricing
+
+
+class ToolCallRecord(Base):
+    """One tool call the model asked for, with the arguments it sent and the result it got."""
+
+    __tablename__ = "tool_calls"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({sql_in(ToolCallStatus)})", name="status_valid"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    turn_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="CASCADE"), index=True
+    )
+    llm_call_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("llm_calls.id", ondelete="SET NULL")
+    )
+    call_id: Mapped[str] = mapped_column(Text)  # the provider's id, echoed in the tool message
+    name: Mapped[str] = mapped_column(Text)
+    arguments: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(Text)
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = _created_at()

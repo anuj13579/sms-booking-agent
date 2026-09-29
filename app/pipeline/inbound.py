@@ -57,6 +57,9 @@ from app.pipeline.safety import detect_hazards
 logger = logging.getLogger(__name__)
 
 DEFAULT_LEASE = timedelta(seconds=120)
+# While holding the lease, keep taking turns for messages that arrived mid-turn, up to this many
+# extra turns. Beyond that, release and let the queue poller pick the conversation up again.
+MAX_FOLLOW_UP_TURNS = 3
 
 
 # --------------------------------------------------------------------------------------------
@@ -139,6 +142,12 @@ class TurnOutcome:
     handled_by: HandledBy
     replies: list[str] = field(default_factory=list)
     alerts: list[OwnerAlert] = field(default_factory=list)
+    # Turns run straight after this one for messages that arrived while it was in progress.
+    follow_ups: list["TurnOutcome"] = field(default_factory=list)
+
+    @property
+    def all_replies(self) -> list[str]:
+        return [*self.replies, *(r for turn in self.follow_ups for r in turn.all_replies)]
 
 
 @dataclass
@@ -180,9 +189,19 @@ async def process_conversation(
     async with sessionmaker() as session, session.begin():
         token = await queue.claim(session, conversation_id, clock.now(), lease)
     if token is None:
+        # Another worker has it. It will see this message before releasing (follow-up turns),
+        # or the poller will.
         return TurnOutcome(conversation_id, HandledBy.BUSY)
     try:
-        return await _process_claimed(sessionmaker, conversation_id, agent, notifier, clock)
+        outcome = await _process_claimed(sessionmaker, conversation_id, agent, notifier, clock)
+        for _ in range(MAX_FOLLOW_UP_TURNS):
+            async with sessionmaker() as session:
+                if not await pending_inbound(session, conversation_id):
+                    break
+            outcome.follow_ups.append(
+                await _process_claimed(sessionmaker, conversation_id, agent, notifier, clock)
+            )
+        return outcome
     finally:
         async with sessionmaker() as session, session.begin():
             await queue.release(session, conversation_id, token)

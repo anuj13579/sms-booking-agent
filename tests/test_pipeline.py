@@ -221,6 +221,28 @@ class TestAgentPath:
             await queue.release(session, conversation.id, token)
         assert (await h.process(conversation.id)).handled_by is HandledBy.AGENT
 
+    async def test_message_arriving_mid_turn_gets_its_own_turn_before_release(
+        self, h: Harness
+    ) -> None:
+        harness = h
+
+        class CustomerKeepsTyping(ScriptedAgent):
+            async def run_turn(self, turn: AgentTurnInput) -> AgentTurnOutput:
+                self.calls.append(turn)
+                if len(self.calls) == 1:  # a second text lands while we "think"
+                    await harness.receive_only("oh and it's making a clicking noise")
+                return AgentTurnOutput(f"reply {len(self.calls)}")
+
+        h.agent = CustomerKeepsTyping()
+        outcome = await h.send("my AC is broken")
+
+        assert [c.texts for c in h.agent.calls] == [
+            ("my AC is broken",),
+            ("oh and it's making a clicking noise",),
+        ]
+        assert outcome.all_replies == ["reply 1", "reply 2"]
+        assert all(m.status != MessageStatus.RECEIVED for m in await h.messages())
+
     async def test_failing_notifier_does_not_fail_the_turn(self, h: Harness) -> None:
         class Broken(RecordingNotifier):
             async def notify(self, alert: OwnerAlert) -> None:

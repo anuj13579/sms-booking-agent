@@ -97,6 +97,9 @@ class SlotProblem(StrEnum):
 
 def check_window(cal: BusinessCalendar, start: datetime, now: datetime) -> Slot | SlotProblem:
     """Validate a requested window start against the calendar (not against technicians)."""
+    if start.tzinfo is None:
+        # astimezone() would silently read a naive value as the server's local time.
+        raise ValueError("naive datetime: pass a timezone-aware value")
     local_day = start.astimezone(cal.tz).date()
     match = next(((s, e) for s, e in cal.windows_on(local_day) if s == start), None)
     if match is None:

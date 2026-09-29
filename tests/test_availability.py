@@ -1,5 +1,6 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.availability import (
@@ -222,3 +223,10 @@ async def test_check_window(session: AsyncSession) -> None:
     last_friday = check_window(cal, local(MONDAY + timedelta(days=11), 10), now)  # day 12 of 14
     assert not isinstance(last_friday, SlotProblem)
     assert check_window(cal, local(MONDAY + timedelta(days=14), 10), now) is SlotProblem.TOO_FAR
+
+
+async def test_check_window_rejects_naive_datetimes(session: AsyncSession) -> None:
+    world = await build_world(session)
+    cal = await load_calendar(session, world.business)
+    with pytest.raises(ValueError, match="naive"):
+        check_window(cal, datetime(2026, 10, 6, 10), local(MONDAY, 9))

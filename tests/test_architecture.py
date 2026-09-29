@@ -2,7 +2,8 @@
 
 ``app/domain`` must work with zero AI in the system: it may not import the agent, the pipeline,
 the channels, the API, or any LLM/HTTP client. ``app/pipeline`` owns the agent *port*
-(a Protocol) and may not import the agent implementation either.
+(a Protocol) and may not import the agent implementation either. ``app/agent`` talks to the LLM
+over plain httpx (D-014) and knows nothing about channels or the API.
 """
 
 import ast
@@ -17,6 +18,8 @@ RULES = {
     "domain": ("app.agent", "app.pipeline", "app.channels", "app.api", *LLM_AND_HTTP),
     "pipeline": ("app.agent", "app.channels", "app.api", *LLM_AND_HTTP),
     "db": ("app.agent", "app.pipeline", "app.channels", "app.api", *LLM_AND_HTTP),
+    # The agent implements the pipeline's port; it knows nothing about transports or the API.
+    "agent": ("app.channels", "app.api", "openai", "anthropic", "litellm", "langchain"),
 }
 
 

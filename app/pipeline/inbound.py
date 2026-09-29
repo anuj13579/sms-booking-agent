@@ -78,12 +78,23 @@ class AgentTurnInput:
 @dataclass(frozen=True)
 class AgentTurnOutput:
     reply: str | None
+    # AGENT for model-written text; SYSTEM when the agent handed off and a fixed template goes out.
     author: MessageAuthor = MessageAuthor.AGENT
+    # Owner alerts the turn raised (escalations). Dispatched after the reply is committed.
+    alerts: tuple[OwnerAlert, ...] = ()
+    # Set when the agent couldn't produce a reply (loop limits, guard failed twice, provider
+    # down). The pipeline then sends the fixed fallback text and escalates as system_error.
+    failed: str | None = None
+    # The agent's own record of the turn; the pipeline links the messages it writes to it.
+    turn_id: uuid.UUID | None = None
 
 
 class TurnAgent(Protocol):
     """Runs one agent turn. Opens its own DB sessions: each tool call commits on its own, so a
-    booking that succeeded stays booked even if a later LLM call in the same turn fails."""
+    booking that succeeded stays booked even if a later LLM call in the same turn fails.
+
+    It should report failure through ``AgentTurnOutput.failed`` rather than raise; an exception
+    is handled the same way, as a last resort."""
 
     async def run_turn(self, turn: AgentTurnInput) -> AgentTurnOutput: ...
 
@@ -234,19 +245,36 @@ async def _process_claimed(
 
     try:
         result = await agent.run_turn(agent_input)
-    except Exception:
+    except Exception as exc:
         logger.exception("agent turn failed for conversation %s", conversation_id)
-        return await _agent_failed(sessionmaker, agent_input, notifier, clock, outcome)
+        result = AgentTurnOutput(None, failed=f"exception: {exc!r}")
+    if result.failed is not None:
+        return await _agent_failed(sessionmaker, agent_input, result, notifier, clock, outcome)
 
     async with sessionmaker() as session, session.begin():
-        conversation = await session.get(Conversation, conversation_id)
+        conversation = await session.get(Conversation, conversation_id, populate_existing=True)
         customer = await session.get(Customer, agent_input.customer_id, populate_existing=True)
         assert conversation is not None and customer is not None
-        # The customer may have texted STOP while the agent was thinking.
-        if result.reply and customer.opted_out_at is None:
-            await add_outbound(session, conversation, result.reply, result.author, clock.now())
+        # The customer may have texted STOP while the agent was thinking, and model-written
+        # text never goes out over a human who took the conversation mid-turn.
+        talking_over_owner = (
+            result.author == MessageAuthor.AGENT and conversation.mode != ConversationMode.BOT
+        )
+        if result.reply and customer.opted_out_at is None and not talking_over_owner:
+            reply = await add_outbound(
+                session, conversation, result.reply, result.author, clock.now()
+            )
+            reply.agent_turn_id = result.turn_id
             outcome.replies.append(result.reply)
-        await mark_inbound(session, agent_input.message_ids, MessageStatus.PROCESSED, clock.now())
+        await mark_inbound(
+            session,
+            agent_input.message_ids,
+            MessageStatus.PROCESSED,
+            clock.now(),
+            agent_turn_id=result.turn_id,
+        )
+    outcome.alerts.extend(result.alerts)
+    await _dispatch(notifier, list(result.alerts))
     outcome.handled_by = HandledBy.AGENT
     return outcome
 
@@ -334,43 +362,54 @@ async def _deterministic_steps(turn: _Turn, pending: list[Message]) -> AgentTurn
 async def _agent_failed(
     sessionmaker: async_sessionmaker[AsyncSession],
     agent_input: AgentTurnInput,
+    result: AgentTurnOutput,
     notifier: OwnerNotifier,
     clock: Clock,
     outcome: TurnOutcome,
 ) -> TurnOutcome:
-    """The customer is never left without a reply: fixed fallback text, and the owner takes over."""
-    alerts: list[OwnerAlert] = []
+    """The customer is never left without a reply: fixed fallback text, and the owner takes over.
+
+    The fallback text is deliberately *not* linked to the agent turn: the next turn shows it to
+    the model as something that happened while it wasn't talking."""
+    alerts: list[OwnerAlert] = list(result.alerts)
     async with sessionmaker() as session, session.begin():
         conversation = await session.get(Conversation, agent_input.conversation_id)
         business = await session.get(Business, agent_input.business_id)
         customer = await session.get(Customer, agent_input.customer_id, populate_existing=True)
         assert conversation is not None and business is not None and customer is not None
         now = clock.now()
-        result = await escalate(
+        escalated = await escalate(
             session,
             business,
             conversation,
             reason=EscalationReason.SYSTEM_ERROR,
-            summary="The agent failed while handling: " + " / ".join(agent_input.texts),
+            summary=f"The agent couldn't finish the turn ({result.failed}) while handling: "
+            + " / ".join(agent_input.texts),
             source=EscalationSource.SYSTEM,
             now=now,
         )
-        if result.created:
+        if escalated.created:
             alerts.append(
                 OwnerAlert(
                     AlertKind.ESCALATION,
                     business.id,
                     conversation.id,
-                    result.escalation.summary,
-                    result.escalation.id,
+                    escalated.escalation.summary,
+                    escalated.escalation.id,
                 )
             )
-        if result.customer_message and customer.opted_out_at is None:
+        if escalated.customer_message and customer.opted_out_at is None:
             await add_outbound(
-                session, conversation, result.customer_message, MessageAuthor.SYSTEM, now
+                session, conversation, escalated.customer_message, MessageAuthor.SYSTEM, now
             )
-            outcome.replies.append(result.customer_message)
-        await mark_inbound(session, agent_input.message_ids, MessageStatus.PROCESSED, now)
+            outcome.replies.append(escalated.customer_message)
+        await mark_inbound(
+            session,
+            agent_input.message_ids,
+            MessageStatus.PROCESSED,
+            now,
+            agent_turn_id=result.turn_id,
+        )
     await _dispatch(notifier, alerts)
     outcome.alerts.extend(alerts)
     outcome.handled_by = HandledBy.AGENT_FAILED

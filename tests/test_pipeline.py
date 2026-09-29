@@ -1,5 +1,6 @@
-"""The inbound pipeline end to end, with a scripted stand-in for the Phase 2 agent."""
+"""The inbound pipeline end to end, with a scripted stand-in for the agent."""
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -207,6 +208,52 @@ class TestAgentPath:
 
         assert outcome.replies == []
         assert [m.direction for m in await h.messages()] == ["in"]
+
+    async def test_agent_reply_never_talks_over_an_owner_who_took_over(self, h: Harness) -> None:
+        sessionmaker = h.sessionmaker
+
+        class OwnerTakesOverMidTurn(ScriptedAgent):
+            async def run_turn(self, turn: AgentTurnInput) -> AgentTurnOutput:
+                async with sessionmaker() as session, session.begin():
+                    conversation = await session.get(Conversation, turn.conversation_id)
+                    assert conversation is not None
+                    conversation.mode = ConversationMode.HANDOFF
+                return AgentTurnOutput("Here are some times...")
+
+        h.agent = OwnerTakesOverMidTurn()
+        outcome = await h.send("what times do you have")
+        assert outcome.replies == []
+        assert [m.direction for m in await h.messages()] == ["in"]
+
+    async def test_reported_failure_takes_the_fallback_path_and_keeps_alerts(
+        self, h: Harness
+    ) -> None:
+        alert = OwnerAlert(AlertKind.ESCALATION, h.world.business.id, uuid.uuid4(), "PRICE QUOTE")
+
+        class GivesUp(ScriptedAgent):
+            async def run_turn(self, turn: AgentTurnInput) -> AgentTurnOutput:
+                return AgentTurnOutput(None, alerts=(alert,), failed="step_limit")
+
+        h.agent = GivesUp()
+        outcome = await h.send("hello")
+        assert outcome.handled_by is HandledBy.AGENT_FAILED
+        assert outcome.replies == [FALLBACK_MESSAGE]
+        [escalation] = await h.escalations()
+        assert "(step_limit)" in escalation.summary
+        assert alert in h.notifier.alerts  # the turn's own alerts still reach the owner
+        assert len(h.alerts(AlertKind.ESCALATION)) == 2
+
+    async def test_agent_alerts_are_dispatched_after_the_reply(self, h: Harness) -> None:
+        alert = OwnerAlert(AlertKind.ESCALATION, h.world.business.id, uuid.uuid4(), "PRICE QUOTE")
+
+        class Notifies(ScriptedAgent):
+            async def run_turn(self, turn: AgentTurnInput) -> AgentTurnOutput:
+                return AgentTurnOutput("Dana will follow up on pricing.", alerts=(alert,))
+
+        h.agent = Notifies()
+        outcome = await h.send("how much?")
+        assert outcome.replies == ["Dana will follow up on pricing."]
+        assert outcome.alerts == [alert] and h.notifier.alerts == [alert]
 
     async def test_busy_while_another_worker_holds_the_lease(self, h: Harness) -> None:
         conversation = await h.receive_only("hello")

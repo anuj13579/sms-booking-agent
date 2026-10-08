@@ -477,6 +477,48 @@ async def test_turn_budget(h: Harness) -> None:
     assert len(h.provider.requests) < 5
 
 
+async def test_a_crash_mid_tool_call_does_not_poison_the_session(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unanswered tool call in a stored turn would make every replayed prompt invalid."""
+    from app.agent import loop
+
+    async def explode(self: Any, parsed: Any) -> Any:
+        raise RuntimeError("executor bug")
+
+    monkeypatch.setattr(loop.ToolExecutor, "execute", explode)
+    h.provider.add(availability())
+    outcome = await h.send("ac repair please")
+    assert outcome.replies == [FALLBACK_MESSAGE]
+    [turn] = await h.all(AgentTurn)
+    assert turn.outcome == AgentTurnOutcome.ERROR
+    assert [m["role"] for m in turn.messages] == ["user"]  # the dangling call was trimmed
+
+    monkeypatch.undo()
+    async with h.sessionmaker() as session, session.begin():
+        [escalation] = await session.scalars(select(Escalation))
+        await resolve_escalation(session, escalation.id, h.clock.now())
+    h.provider.add(reply("Sorry about that. What's going on with the AC?"))
+    await h.send("hello?")
+    replayed = h.provider.requests[-1].messages
+    assert not any(m.get("tool_calls") for m in replayed)
+
+
+def test_replayable_keeps_complete_turns() -> None:
+    from app.agent.loop import replayable
+
+    user = {"role": "user", "content": "hi"}
+    asked = {"role": "assistant", "content": "", "tool_calls": [{"id": "a"}, {"id": "b"}]}
+    one = {"role": "tool", "tool_call_id": "a", "content": "{}"}
+    two = {"role": "tool", "tool_call_id": "b", "content": "{}"}
+    done = {"role": "assistant", "content": "ok"}
+    assert replayable([user, asked, one, two, done]) == [user, asked, one, two, done]
+    assert replayable([user, asked, one, two]) == [user, asked, one, two]
+    assert replayable([user, asked, one]) == [user]
+    assert replayable([user, asked]) == [user]
+    assert replayable([user]) == [user]
+
+
 async def test_unexpected_crash_still_records_the_turn(
     h: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:

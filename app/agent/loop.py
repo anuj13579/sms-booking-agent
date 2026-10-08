@@ -97,6 +97,20 @@ def _ms_since(began: float) -> int:
     return round((time.monotonic() - began) * 1000)
 
 
+def replayable(messages: list[Message]) -> list[Message]:
+    """Drop a trailing assistant tool-call message whose results never arrived.
+
+    Stored turns are replayed into every later prompt (D-030), and the API rejects a tool call
+    without its result. A crash between the two would otherwise poison the whole session."""
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            asked = {call["id"] for call in message["tool_calls"]}
+            answered = {m.get("tool_call_id") for m in messages[index + 1 :]}
+            return messages if asked <= answered else messages[:index]
+    return messages
+
+
 class Agent:
     """Implements the pipeline's ``TurnAgent`` port."""
 
@@ -399,7 +413,7 @@ class Agent:
             await session.execute(
                 update(AgentTurn)
                 .where(AgentTurn.id == prepared.turn_id)
-                .values(messages=state.appended)
+                .values(messages=replayable(state.appended))
             )
 
     async def _finish(
@@ -413,7 +427,7 @@ class Agent:
                     outcome=finish.outcome,
                     reply=finish.reply,
                     error=finish.error[:2000] if finish.error else None,
-                    messages=state.appended,
+                    messages=replayable(state.appended),
                     finished_at=self._clock.now(),
                     latency_ms=_ms_since(started),
                 )

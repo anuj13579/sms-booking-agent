@@ -2,7 +2,7 @@
 
 An SMS agent for small HVAC, plumbing, and electrical businesses. It answers customer texts, books real technician arrival windows, handles reschedules and cancellations, and hands off to the owner for emergencies, price questions, and anything it isn't sure about.
 
-**Status:** Phase 1 (core domain, no LLM) complete. The scheduling core, the database guarantees, and the deterministic half of the inbound pipeline are built and tested. The agent itself arrives in Phase 2.
+**Status:** Phase 2 (agent loop and web-chat simulator) built and tested offline. The LLM agent runs on DeepSeek through an OpenAI-compatible adapter, behind the deterministic pipeline from Phase 1. It has not yet been measured against the real model at scale; that is Phase 3.
 
 ## Documents
 
@@ -14,12 +14,24 @@ An SMS agent for small HVAC, plumbing, and electrical businesses. It answers cus
 
 0. Design ✅
 1. Core domain, no LLM ✅
-2. Agent loop, plus the web-chat simulator
+2. Agent loop, plus the web-chat simulator ✅
 3. Eval harness
 4. Iterate on eval results
 5. Twilio, plus the owner dashboard
 6. Deployment
 7. Pilot and write-up
+
+## What Phase 2 built
+
+- **The agent** (`app/agent`). One model, five tools, at most six LLM calls a turn (D-001). Tool arguments are Pydantic models and the schema the model sees is generated from them. No argument can name a customer, business, or phone number: identity comes from the conversation (D-010). Each tool call commits on its own.
+- **Prompting for cost.** The prompt only ever grows at the end: each turn stores exactly what it added, and the next turn replays it unchanged before a fresh context note, so DeepSeek's prefix cache keeps hitting (D-015, D-030). A test checks this byte for byte. The prompt version is a hash of the template and the tool descriptions, and it is logged on every call.
+- **Output guard.** Typography is normalised; prices, emoji, and anything over three SMS segments are rejected, with one rewrite before the fixed fallback (D-016, D-029).
+- **Failure handling.** Per-call timeouts, a turn budget, one retry, a forced text answer on the last call, and handoff escalations that pre-empt everything else in the same response (D-031). The customer always gets a reply.
+- **Provider.** Plain httpx against any OpenAI-compatible endpoint. DeepSeek thinks by default, so the adapter turns that off explicitly (D-032). Every call is logged with tokens, cache hits, latency, and cost from a dated price table.
+- **Web-chat simulator** (`app/api`). Text the agent from a browser as any customer, and inspect every turn: tool calls with arguments and results, tokens, cost, escalations, bookings, and the SMS segment count of each reply.
+- **Tests.** Over 320, still all at $0: the agent runs against a scripted FakeProvider, and everything else (tools, domain, guard, escalation policy, logging, the HTTP app) is real.
+
+One finding worth reading: three concatenated SMS segments hold 459 characters, not 480. [D-029](DECISIONS.md) corrects the Phase 0 number.
 
 ## What Phase 1 built
 
@@ -42,6 +54,16 @@ uv run python -m app.seed             # the fictional pilot business, Brightwate
 uv run python scripts/demo.py         # availability, a booking, and the pipeline, no LLM needed
 uv run pytest                         # the test suite (wipes and rebuilds booking_agent_test)
 ```
+
+To talk to the agent, copy `.env.example` to `.env`, set `DEEPSEEK_API_KEY`, then:
+
+```bash
+uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000
+```
+
+Open http://127.0.0.1:8000 for the web-chat simulator. It is for development only: it lets anyone text the agent as any number, so keep it on localhost (`SIMULATOR_ENABLED=false` turns it off).
+
+`uv run python scripts/smoke_live.py` runs six fixed conversations against the real model (booking, cancel, price question, a subtle emergency, out of scope, prompt injection) with deterministic checks. It costs well under a cent on `deepseek-flash`. It is a smoke test, not an eval.
 
 Checks CI runs on every push: `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, and `uv run pytest`. CI makes no LLM calls (D-019).
 

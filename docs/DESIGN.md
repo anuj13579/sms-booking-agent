@@ -1,6 +1,6 @@
 # SMS Booking Agent: Design (Phase 0)
 
-Status: Phase 0 design, updated with Phase 1 findings (2026-09-29) · Decision IDs (D-xxx) refer to [`DECISIONS.md`](../DECISIONS.md)
+Status: Phase 0 design, updated with Phase 1 and Phase 2 findings (2026-09-29) · Decision IDs (D-xxx) refer to [`DECISIONS.md`](../DECISIONS.md)
 
 ## 1. Problem and goals
 
@@ -49,7 +49,7 @@ flowchart LR
   AG --> EX["Tool executor<br/>Pydantic-validated, session-scoped"]
   EX --> DOM["Domain services<br/>availability · booking · escalation"]
   DOM --> DB[("PostgreSQL<br/>source of truth")]
-  AG --> GUARD["Output guard<br/>price regex · length"]
+  AG --> GUARD["Output guard<br/>price regex · GSM-7 · 3 segments"]
   GUARD --> OUT[Outbound sender]
   PIPE -->|safety template / opt-out reply| OUT
   OUT -.->|reply on same channel| CH
@@ -88,7 +88,7 @@ sequenceDiagram
   A->>D: compute free windows
   A->>L: tool result (windows with human-readable labels)
   L-->>A: reply text
-  A->>A: output guard (no prices, ≤ 480 chars)
+  A->>A: output guard (no prices, GSM-7, ≤ 459 chars)
   A->>T: send SMS via REST API
   T->>C: "I can do Tue Sep 29 10am-12pm or 1-3pm. Which works?"
 ```
@@ -114,17 +114,21 @@ A batch can mix these: "HELP" followed by "my AC is broken" gets the help text a
 
 | Tool | Arguments (LLM-supplied) | Server-side behavior |
 |---|---|---|
-| `get_availability` | `service_type`, `earliest_date`, `latest_date`, optional `part_of_day` | Returns ≤ 6 free windows, each with a slot id and a label like "Tue Sep 29, 10am-12pm" (ASCII hyphen, D-027) |
-| `create_booking` | `service_type`, `slot_start`, `customer_name`, `address`, `zip`, `problem_description`, `urgency` | Re-checks availability, assigns a technician, and inserts inside a transaction. Idempotent. |
-| `reschedule_booking` | `booking_ref`, `new_slot_start` | Moves the booking in place and writes an audit event |
+| `get_availability` | `service_type`, optional `earliest_date`, `latest_date`, `part_of_day` | Returns ≤ 6 free windows, each with a `slot_id` and a label like "Tue Sep 29, 10am-12pm" (ASCII hyphen, D-027). When nothing matches, it says why and returns the nearest other openings in the same call. |
+| `create_booking` | `service_type`, `slot_id`, `customer_name`, `address`, `zip`, `problem_description`, `urgency` | Re-checks availability, assigns a technician, and inserts inside a transaction. Idempotent. |
+| `reschedule_booking` | `booking_ref`, `new_slot_id` | Moves the booking in place and writes an audit event |
 | `cancel_booking` | `booking_ref`, optional `reason` | Idempotent. Cancelling an already-cancelled booking returns `already_cancelled`. |
 | `escalate_to_owner` | `reason` (enum), `summary`, optional `hazard` | The **server** applies the escalation policy: handoff or notify (see below) |
 
 **Session scoping.** Tool arguments never include `customer_id`, `business_id`, or a phone number. Identity comes from the conversation session on the server. A prompt-injected "cancel all bookings for 555-0199" has no way to name another customer, because `booking_ref` lookups are filtered by the session's customer (D-010).
 
-**Errors are data.** Invalid arguments and domain failures (`slot_unavailable`, `outside_service_area`, `booking_not_found`) return a structured tool result the model can recover from. For example, `slot_unavailable` includes alternative windows. They do not raise exceptions.
+The `service_type` argument is an enum of the business's own service codes, so the model can't invent one. A `slot_id` is the window's local start with its UTC offset (`2026-10-06T08:00-04:00`); one without an offset is read as the business's local time. Every tool call runs in its own transaction.
 
-**Loop limits.** At most **6 LLM calls per turn**, a 45-second wall-clock budget, a 20-second timeout per call, and one retry with backoff. When any limit is hit, the customer gets a fixed fallback message ("Thanks, we got your message and someone will follow up shortly"), and the conversation escalates with reason `system_error`. The customer is never left without a reply.
+**Errors are data.** Invalid arguments and domain failures (`slot_unavailable`, `outside_service_area`, `booking_not_found`) return a structured tool result the model can recover from. For example, `slot_unavailable` includes alternative windows. They do not raise exceptions, and a crashing tool returns a generic `internal_error` result rather than a stack trace.
+
+**One response, several calls** (D-031). If a response holds a handoff-mode escalation, that call runs first and the other calls in the response are skipped. Nothing gets booked through an emergency, whatever order the model listed its calls in.
+
+**Loop limits.** At most **6 LLM calls per turn**, a 45-second wall-clock budget, a 20-second timeout per call, and one retry for timeouts, rate limits, and 5xx responses. The sixth call is made with `tool_choice="none"`, so the model has to answer in words (D-031). When any limit is hit, the customer gets a fixed fallback message ("Thanks, we got your message and someone will follow up shortly"), and the conversation escalates with reason `system_error`. The customer is never left without a reply. The agent reports these failures to the pipeline as data (`step_limit`, `time_limit`, `llm_error`, `guard_failed`, `error`), and every turn is recorded with its outcome.
 
 **Escalation policy.** A server-side table decides the mode. The LLM only classifies the reason (D-011):
 
@@ -138,25 +142,26 @@ A batch can mix these: "HELP" followed by "my AC is broken" gets the help text a
 
 Off-topic chit-chat ("what's the weather?") gets a one-line redirect and **no** escalation. Escalating everything would drown the owner.
 
-**Conversation state.** Nothing lives in model memory (D-005). Each turn, the context is rebuilt from the DB:
+**Conversation state.** Nothing lives in model memory (D-005). Each turn, the prompt is rebuilt from the DB (D-030):
 
-- The static system prompt, which is versioned.
-- The business profile: services, hours, and service area.
-- The customer profile and their **upcoming confirmed bookings, read fresh from the DB**.
-- The session transcript, including earlier tool calls and results.
-- A per-turn context note. The note holds the current local date/time and a 14-day calendar ("Tue = 2026-09-29"), so the model looks dates up instead of computing them.
+- The static system prompt, which is versioned, including the business profile: services, arrival windows, and service area.
+- Every earlier turn of this session, **replayed exactly as stored** in `agent_turns.messages`: the context note and customer text, the tool calls and results, and the reply that was sent.
+- One new user message: a context note, then the customer's new text. The note holds the current local date and time, a date table for the booking horizon ("Tue Sep 29 = 2026-09-29 (today)"), what's on file for the customer, and their **upcoming confirmed bookings, read fresh from the DB**. It also lists, once, anything that happened since the agent last spoke: keyword replies, safety templates, owner texts, or the fallback.
+
+The model looks dates up instead of computing them, and the prompt tells it the newest context block overrides anything earlier.
 
 A session ends after 24 hours of inactivity, which keeps the context short and stops stale offers from carrying over (D-021). A conversation in handoff mode never times out: it stays with the owner until they resolve the escalation (D-025).
 
-**Prompt layout for caching.** The static system prompt and business profile come first. Every turn only **appends** (context note → customer text → tool calls → reply), so earlier messages are never rewritten. DeepSeek caches prompt prefixes automatically, and cache-hit input costs about 2–3% of the cache-miss price. An append-only layout keeps most input tokens on the cheap path. Every LLM call logs `prompt_version` (a name plus a content hash) (D-015).
+**Prompt layout for caching.** The static system prompt and business profile come first. Every turn only **appends** (context note → customer text → tool calls → reply), so earlier messages are never rewritten. A test checks that turn 2's prompt is turn 1's final prompt plus the reply plus the new message, byte for byte. DeepSeek caches prompt prefixes automatically, and cache-hit input costs about 2–3% of the cache-miss price. An append-only layout keeps most input tokens on the cheap path. Every LLM call logs `prompt_version` (a name plus a content hash) (D-015).
 
-**Output guard.** Deterministic checks run before any send:
+**Output guard.** Deterministic checks run before any send. First, typography models habitually produce is normalised rather than rejected: curly quotes, en and em dashes, ellipses, non-breaking spaces, and markdown bold. Then the reply is rejected if it has:
 
-- A currency/price regex (`$` + digits, "N dollars/bucks").
-- A length cap of 480 characters (3 SMS segments).
-- GSM-7 only (D-027). Every fixed template and time label is tested for it. Phase 2 adds the same check (with normalisation of curly quotes and dashes) to the model's output.
+- A price: a currency/price regex (`$` + digits, "N dollars/bucks", "ninety-nine bucks").
+- Any character outside GSM-7 after normalisation, such as an emoji (D-027).
+- More than 459 characters, which is 3 concatenated SMS segments (D-029).
+- No text at all.
 
-On a violation, the model regenerates once with feedback. If it fails again, the customer gets a fixed fallback and the conversation escalates. More guards (for example, time-promise checks) are added only when evals show a real failure mode (D-016).
+On a violation, the model regenerates once with feedback. The rejected reply isn't stored in the transcript, because the customer never saw it. If it fails again, the customer gets a fixed fallback and the conversation escalates. More guards (for example, time-promise checks) are added only when evals show a real failure mode (D-016).
 
 ## 5. Safety design (emergencies)
 
@@ -307,7 +312,7 @@ erDiagram
   }
 ```
 
-Tables not expanded above are `service_types` (code, label, trade, bookable), `window_templates` (weekday, start_local, end_local), `technician_time_off` (tstzrange), `booking_events` (created/rescheduled/cancelled with old and new window and actor), `agent_turns` (trigger messages, steps, outcome, prompt version), and `tool_calls` (name, args, result, status, latency). The Phase 1 migration creates everything except `agent_turns`, `llm_calls`, and `tool_calls`, which arrive with the agent loop in Phase 2.
+Tables not expanded above are `service_types` (code, label, trade, bookable), `window_templates` (weekday, start_local, end_local), `technician_time_off` (tstzrange), `booking_events` (created/rescheduled/cancelled with old and new window and actor), `agent_turns` (trigger messages, steps, outcome, prompt version), and `tool_calls` (name, args, result, status, latency). Migration 0001 (Phase 1) creates the core schema. Migration 0002 (Phase 2) adds `agent_turns` (including `messages`, the turn's slice of the transcript), `llm_calls`, `tool_calls`, and `messages.agent_turn_id`, which links each message to the turn that consumed or wrote it.
 
 **Integrity rules enforced by Postgres, not app code** (D-006):
 
@@ -328,7 +333,7 @@ The Phase 1 race tests (a barrier makes every transaction find the window free b
 - `OpenAICompatibleProvider`. DeepSeek exposes an OpenAI-compatible API, so the same adapter also works with OpenAI, OpenRouter, US hosts of DeepSeek's open weights, or a local vLLM server. Switching is a config change.
 - `FakeProvider`. It replays scripted responses, so the agent loop's control flow is unit-tested with zero API cost and full determinism.
 
-**Models.** The default agent is `deepseek-flash` (DeepSeek-V4.1-Flash) in non-thinking mode, and `deepseek-v4-pro` serves as a comparison model. The eval harness decides whether Flash's tool calling is good enough. "Thinking on vs. off" is one of the planned experiments.
+**Models.** The default agent is `deepseek-flash` (DeepSeek-V4.1-Flash) in non-thinking mode, and `deepseek-v4-pro` serves as a comparison model. Thinking is **on by default** in DeepSeek's API, so the adapter turns it off explicitly (D-032). The eval harness decides whether Flash's tool calling is good enough. "Thinking on vs. off" is one of the planned experiments.
 
 **Price basis** (DeepSeek pricing page, fetched 2026-09-26, per 1M tokens):
 
@@ -406,14 +411,15 @@ These choices are set now because they shape the schema and logging (D-018):
 
 ```
 app/
-  main.py              FastAPI app factory, lifespan (starts worker)
+  main.py              FastAPI app factory, lifespan (starts the worker)
+  worker.py            queue poller: answers messages a crashed worker left behind
   config.py            pydantic-settings; all secrets from env
   db/                  SQLAlchemy models, session, Alembic migrations
-  domain/              clock, availability, booking, escalation (no LLM imports)
-  pipeline/            inbound handling: dedupe, opt-out, handoff, safety pre-filter
-  agent/               loop, tools, policy, output guard, prompts/, providers/
-  channels/            twilio, webchat, in-process
-  api/                 webhooks, simulator, dashboard API
+  domain/              clock, availability, booking, escalation, SMS rules (no LLM imports)
+  pipeline/            inbound handling: dedupe, opt-out, handoff, safety pre-filter, agent port
+  agent/               loop, tools, executor, context, output guard, prompts/, providers/
+  channels/            webchat now; twilio in Phase 5
+  api/                 web-chat simulator now; webhooks and dashboard API in Phase 5
 dashboard/             React owner dashboard (Phase 5)
 evals/                 scenarios/, simulated customer, graders, runner, reports
 tests/                 pytest; real Postgres, no SQLite (D-017)

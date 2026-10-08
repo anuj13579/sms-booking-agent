@@ -55,7 +55,7 @@ Each entry has the following fields:
 - **Revisit if.** The look-alike false-positive rate is high enough to annoy real customers. Then add targeted exclusions ("gas water heater install") backed by eval evidence.
 
 ## D-005 · The database is the source of truth; context is rebuilt every turn
-*2026-09-26 · Phase 0 · Accepted*
+*2026-09-26 · Phase 0 · Accepted · Implemented by D-030*
 
 - **Context.** LLMs "remember" whatever is in the context window, including stale or hallucinated bookings.
 - **Decision.** Every turn rebuilds the prompt from the DB: business profile, customer profile, **upcoming confirmed bookings read fresh**, session transcript, and the current local date. Bookings are changed only through tools.
@@ -160,7 +160,7 @@ Each entry has the following fields:
 - **Revisit if.** Never. This is a core principle.
 
 ## D-014 · Thin provider interface; DeepSeek via an OpenAI-compatible adapter; FakeProvider for tests
-*2026-09-26 · Phase 0 · Accepted*
+*2026-09-26 · Phase 0 · Accepted · Detailed by D-032*
 
 - **Context.**
   - Owner decisions: DeepSeek V4 family only, budget under $10/month.
@@ -188,7 +188,7 @@ Each entry has the following fields:
 - **Revisit if.** The provider's caching semantics change.
 
 ## D-016 · Deterministic output guard; new guards only on eval evidence
-*2026-09-26 · Phase 0 · Accepted*
+*2026-09-26 · Phase 0 · Accepted · Length cap corrected by D-029*
 
 - **Context.** "Never invent prices" is checkable by regex. "Never promise unverifiable times" is harder to check deterministically.
 - **Decision.** Before sending: a price/currency regex and a 480-character cap. On a violation, regenerate once with feedback, then fall back to a fixed message and escalate. Time-promise checks are left to prompt rules and the eval judge, and get promoted to a guard only if evals show violations.
@@ -318,7 +318,7 @@ Each entry has the following fields:
 - **Revisit if.** Booking write latency shows lock waits in production, which is unlikely at 1–10 technicians.
 
 ## D-027 · Customer-facing text is GSM-7 only
-*2026-09-29 · Phase 1 · Accepted*
+*2026-09-29 · Phase 1 · Accepted · Length cap corrected by D-029*
 
 - **Context.** One character outside the GSM-7 set (an en dash, a curly quote, an emoji) switches the whole SMS to UCS-2 encoding. A segment then carries 70 characters instead of 160, so the 480-character cap becomes 7 billed segments instead of 3. The Phase 0 examples used en dashes ("10am–12pm").
 - **Decision.** Time labels use an ASCII hyphen ("Tue Sep 29, 10am-12pm"). Every fixed template is tested for GSM-7 and the 480-character cap with a long owner and business name. The Phase 2 output guard adds the same check to the model's replies, normalising curly quotes and dashes first.
@@ -338,3 +338,64 @@ Each entry has the following fields:
 - **Rejected.** *Treating YES as a keyword for everyone.* It would swallow the most common booking confirmation.
 - **Why.** Texting someone who asked us to stop is the worse error, so ambiguity resolves toward opting out. But opting out stops *texts*, not the business's duty to know a customer reported a gas leak.
 - **Revisit if.** Phase 5 confirms CANCEL can be removed from the list for this number (the docs suggest it can). Then "Cancel" alone could go to the agent as an appointment cancellation.
+
+## D-029 · The SMS length cap is 459 characters, not 480
+*2026-09-29 · Phase 2 · Accepted · Corrects D-016 and D-027*
+
+- **Context.** D-016 set the cap at 480 characters as "3 SMS segments", which is 3 × 160. But a message longer than one segment is sent as concatenated segments, and each one gives 7 characters to the header that stitches them together: 153 GSM-7 characters per segment, not 160. So a 480-character reply bills as 4 segments. This came up while writing the guard's length check.
+- **Decision.** The cap is 3 × 153 = 459 GSM-7 characters. Characters from the GSM-7 extension table (`[]{}~|^\` and the euro sign) count twice. `app/domain/sms.py` holds the rules, and both the fixed templates and the output guard use them. The simulator shows the segment count under every reply.
+- **Rejected.**
+  - *Keeping 480.* The worst case would cost a third more than the design says.
+  - *A 2-segment cap (306).* Cheaper, but a booking confirmation with the window, ref, address, and the "reply cancel my appointment" hint can run long. That needs eval data on real reply lengths first.
+- **Why.** The intent was 3 segments. The number was wrong.
+- **Revisit if.** Evals show nearly every reply fits in 2 segments, so a tighter cap would cost nothing in task success.
+
+## D-030 · The transcript is replayed from each turn's stored messages
+*2026-09-29 · Phase 2 · Accepted · Implements D-005 and D-015*
+
+- **Context.** D-005 says the prompt is rebuilt from the database every turn. D-015 says the prompt may only grow at the end, so the provider's prefix cache keeps hitting. Rebuilding by re-rendering the `messages` table would drop the tool calls and results. Worse, any rendering difference (a changed label, a fresher "upcoming bookings" line) would invalidate the cache from that point on.
+- **Decision.**
+  - Each agent turn stores exactly the messages it appended, in `agent_turns.messages`. That is one user message (a context note plus the customer's text), then the assistant's tool calls, the tool results, and the reply that was sent.
+  - The next prompt is the system prompt, then every earlier turn's messages replayed unchanged, then one new user message. Facts that can change (the time, the date table, what's on file, upcoming bookings read fresh) go only in that new message, and the prompt tells the model the newest context block wins.
+  - Messages the agent didn't handle (keyword replies, safety templates, owner texts, the fallback) have no `agent_turn_id`. The next context note lists them once, under "Since your last reply".
+  - A reply the guard rejected is shown to the model for its rewrite, but not stored. Later turns see only what the customer actually received.
+  - Turns that crashed without an outcome are left out of the replay. Their messages are still pending and get processed again.
+- **Rejected.**
+  - *Re-rendering from `messages`.* Loses the tool results, and any rendering change breaks the cache.
+  - *Keeping the transcript in process memory.* Lost on restart, and exactly what D-005 rules out.
+  - *Summarising earlier turns.* Unnecessary within a 24-hour session (D-021).
+- **Why.** The model sees exactly what it saw before, so the conversation stays coherent and the cached prefix stays valid. The database, not the model's memory, supplies anything that might have changed. A test checks that turn 2's prompt is turn 1's final prompt plus the reply plus the new message, byte for byte.
+- **Consequence.** An old context note stays in the transcript even when its facts go stale, for example a booking the owner has since cancelled. The newest note always says otherwise, and the prompt tells the model to trust it.
+- **Revisit if.** Sessions get long enough that replaying them costs real money. Then summarise at a session boundary.
+
+## D-031 · Loop control: handoffs pre-empt, the last call must answer, failures are reported
+*2026-09-29 · Phase 2 · Accepted · Details D-001, D-003, and D-011*
+
+- **Context.** Three gaps between the Phase 0 loop description and working code:
+  1. One model response can hold several tool calls, such as `create_booking` and `escalate_to_owner(emergency)` together.
+  2. "At most 6 LLM calls" didn't say what happens when the sixth asks for another tool.
+  3. The pipeline's only failure signal was an exception.
+- **Decision.**
+  - A handoff-mode escalation in a response runs first, and every other call in that response is skipped (logged as `skipped` and answered with `not_executed`). The turn then ends with the policy's fixed text, with no further LLM call.
+  - The sixth call is made with `tool_choice="none"`, so the model has to answer in words. If it still asks for a tool, the turn fails as `step_limit`.
+  - The agent reports failure in `AgentTurnOutput.failed` (`step_limit`, `time_limit`, `llm_error`, `guard_failed`, or `error`), and every turn is recorded with its outcome. The pipeline sends the fallback and escalates as `system_error`. An exception still gets the same treatment, as a last resort.
+  - Each call gets one retry for timeouts, rate limits, 5xx responses, and malformed replies, and none for any other 4xx.
+- **Rejected.**
+  - *Running the calls in the model's order.* The booking would land before the escalation.
+  - *Rejecting a response that mixes calls.* It wastes a step, and the other calls are usually fine.
+- **Why.** Whether a customer gets booked through a gas leak can't depend on the order the model listed its calls in.
+- **Revisit if.** Evals show the model often mixes escalations with other calls. Then address it in the prompt as well.
+
+## D-032 · DeepSeek V4 thinks by default; the agent turns it off explicitly
+*2026-09-29 · Phase 2 · Accepted · Details D-014*
+
+- **Context.** DeepSeek's API reference (checked 2026-09-29) documents thinking as **on by default** for `deepseek-flash` and `deepseek-v4-pro`, with `reasoning_effort` defaulting to high. In thinking mode the temperature is ignored, output tokens include the reasoning, and every request that carries tools must send each earlier `reasoning_content` back, or the API returns a 400. The design assumed non-thinking.
+- **Decision.**
+  - The adapter sends `"thinking": {"type": "disabled"}` unless `LLM_THINKING=true`.
+  - It still keeps `reasoning_content` on assistant messages when one comes back, so the planned thinking experiment needs no code changes.
+  - Temperature defaults to 0.3 for consistent tool use. That's an experiment knob for Phase 4, not a settled value.
+  - The adapter is plain httpx rather than the `openai` SDK, so every field that reaches the provider is visible in one file.
+- **Rejected.** *Relying on the provider's default.* It silently changes cost and behaviour.
+- **Why.** Anything that changes cost should be explicit in our code, not implied by someone else's default.
+- **Revisit if.** The Phase 4 thinking-on experiment shows a task-success gain worth its cost.
+

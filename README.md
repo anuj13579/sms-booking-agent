@@ -17,9 +17,18 @@ An SMS agent for small HVAC, plumbing, and electrical businesses. It answers cus
 2. Agent loop, plus the web-chat simulator ✅
 3. Eval harness
 4. Iterate on eval results
-5. Twilio, plus the owner dashboard
+5. Public demo: per-visitor sandboxes, the owner dashboard, and a Telegram bot
 6. Deployment
-7. Pilot and write-up
+7. Share the demo and write up
+
+**No Twilio.** Sending real SMS needs a paid Twilio account and US sender registration, which doesn't fit a portfolio project on a budget under $10/month. The deployed agent is reached through a public web demo and a Telegram bot instead, and it still follows SMS rules on every channel: GSM-7 text, at most three segments, and carrier keywords like STOP. Adding Twilio later would mean one more channel adapter, not a rewrite. See [D-033](DECISIONS.md).
+
+**The Phase 5 plan** ([DESIGN §12](docs/DESIGN.md), D-034 to D-037):
+
+- Each visitor gets a private copy of the demo business, tied to a cookie and deleted 48 hours after last use. They chat as a customer, then open the owner dashboard to see their bookings, escalations, and the agent's tool calls.
+- One React app holds the customer chat (with an "under the hood" panel for tool calls, tokens, and cost) and the owner dashboard.
+- A Telegram bot is a second way to chat. Its link connects the Telegram chat to the visitor's sandbox, so those conversations show up in the same dashboard.
+- Rate limits and a daily LLM spend cap are counted in Postgres.
 
 ## What Phase 2 built
 

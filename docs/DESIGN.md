@@ -1,6 +1,6 @@
 # SMS Booking Agent: Design (Phase 0)
 
-Status: Phase 0 design, updated with Phase 1 and Phase 2 findings (2026-09-29) · Decision IDs (D-xxx) refer to [`DECISIONS.md`](../DECISIONS.md)
+Status: Phase 0 design, updated with Phase 1 and Phase 2 findings (2026-09-29) and the Phase 5 channel plan: no Twilio, a public demo and a Telegram bot instead (2026-11-22) · Decision IDs (D-xxx) refer to [`DECISIONS.md`](../DECISIONS.md)
 
 ## 1. Problem and goals
 
@@ -10,6 +10,8 @@ Small HVAC, plumbing, and electrical shops (1–10 technicians) lose jobs becaus
 2. Books a real, conflict-free arrival window with a qualified technician.
 3. Confirms the booking, and handles reschedules and cancellations.
 4. Hands off to the owner when it should not act alone: emergencies, upset customers, price questions, out-of-scope requests, or uncertainty.
+
+The agent is built to SMS limits (GSM-7 text, at most three segments, carrier keywords). The deployed project doesn't send real SMS: visitors reach it through a public web demo and a Telegram bot, and the same SMS rules apply there (D-033, §12).
 
 **Success criteria for this project.** The success criteria are measured, not asserted (Phase 3–4 eval harness):
 
@@ -21,7 +23,7 @@ Small HVAC, plumbing, and electrical shops (1–10 technicians) lose jobs becaus
 | Task success (normal booking / reschedule / cancel) | ≥ 85% |
 | Cost per conversation | < $0.01 on the default model |
 
-**Non-goals** (from the spec): invoicing, payments, voice, a full CRM, multi-tenant billing, and a technician app. v1 serves **one business per deployment**. The schema carries `business_id` everywhere so multi-tenancy stays possible later, but none of it is built.
+**Non-goals** (from the spec): invoicing, payments, voice, a full CRM, multi-tenant billing, and a technician app. v1 serves **one business per deployment**. The schema carries `business_id` everywhere so multi-tenancy stays possible later, but none of it is built. The one exception is the public demo, which gives each visitor a private copy of the seed business (D-034); there is still no onboarding, billing, or settings UI.
 
 **Fixed inputs from the owner (2026-09-26):**
 
@@ -30,6 +32,7 @@ Small HVAC, plumbing, and electrical shops (1–10 technicians) lose jobs becaus
 - Cloud: decided at Phase 6.
 - Pilot: a portfolio project with friendly testers, no real business.
 - Seed business: fictional ("Brightwater Home Services"), time zone `America/New_York`.
+- Channels (2026-11-22): no Twilio. The deployment is a public web demo plus a Telegram bot (D-033).
 
 ## 2. Architecture
 
@@ -38,12 +41,14 @@ Small HVAC, plumbing, and electrical shops (1–10 technicians) lose jobs becaus
 ```mermaid
 flowchart LR
   subgraph CH[Channels]
-    SMS["Customer phone (SMS)"] -->|signed webhook| TW[Twilio adapter]
-    WEB[Web-chat simulator] --> WC[Web-chat adapter]
+    TG["Customer on Telegram"] -->|webhook + secret token| TA[Telegram adapter]
+    WEB["Public demo chat<br/>(per-visitor sandbox)"] --> WC[Web-chat adapter]
+    DEV["Dev simulator (localhost)"] --> WC
     SIM["Eval harness (simulated customer)"] --> IP[In-process adapter]
   end
-  TW & WC & IP --> PIPE["Inbound pipeline<br/>dedupe · keywords · emergency pre-filter<br/>opted-out and handoff gates"]
-  PIPE -->|needs agent| Q[("Postgres work queue<br/>SKIP LOCKED + lease")]
+  TA & WC & IP --> PIPE["Inbound pipeline<br/>dedupe · keywords · emergency pre-filter<br/>opted-out and handoff gates"]
+  PIPE -->|needs agent| LIM["Demo limits<br/>rate · daily spend cap"]
+  LIM --> Q[("Postgres work queue<br/>SKIP LOCKED + lease")]
   Q --> AG["Agent loop<br/>max 6 steps / turn"]
   AG <-->|tool calling| LLM["LLM provider interface<br/>OpenAI-compatible adapter → DeepSeek"]
   AG --> EX["Tool executor<br/>Pydantic-validated, session-scoped"]
@@ -54,12 +59,12 @@ flowchart LR
   PIPE -->|safety template / opt-out reply| OUT
   OUT -.->|reply on same channel| CH
   DOM --> NOTIFY[Owner notifier]
-  DASH[Owner dashboard - React] --> API[Dashboard API] --> DB
+  DASH["Owner dashboard - React<br/>(same sandbox cookie)"] --> API[Demo API] --> DB
 ```
 
 **The core idea is layers of decreasing determinism.** Everything that must *never* go wrong is handled by plain code before or after the LLM: opt-out, emergencies, double-booking, price leakage, and data access scope. The LLM does only what needs language understanding: extracting details from messy texts, asking good follow-up questions, and choosing which tool to call. If the model misbehaves, the worst outcome is a bad SMS reply or an unnecessary escalation, never a double-booking or a missed safety message on a keyword-detectable emergency (D-001, D-002).
 
-**One code path for all channels.** Twilio, the web-chat simulator, and the eval harness all call the same `handle_inbound(channel, business, from_number, body)` function. Only the transport differs, so the evals measure the production path (D-013).
+**One code path for all channels.** Telegram, the web chat (public demo and dev simulator), and the eval harness all call the same `handle_inbound(channel, business, from_number, body)` function. Only the transport differs, so the evals measure the production path (D-013). Twilio would be one more adapter on the same function; it isn't built (D-033).
 
 ## 3. Main flow: one customer turn
 
@@ -69,16 +74,16 @@ flowchart LR
 sequenceDiagram
   autonumber
   participant C as Customer
-  participant T as Twilio
+  participant T as Telegram
   participant W as Webhook (FastAPI)
   participant P as Inbound pipeline
   participant A as Agent loop
   participant L as LLM (DeepSeek)
   participant D as Postgres
   C->>T: "AC stopped working, can someone come Tuesday?"
-  T->>W: POST /webhooks/twilio (X-Twilio-Signature)
-  W->>D: insert message (UNIQUE provider SID → retries deduped)
-  W-->>T: 200 + empty TwiML within ms
+  T->>W: POST /webhooks/telegram (secret token header)
+  W->>D: insert message (UNIQUE provider_sid tg:update_id → retries deduped)
+  W-->>T: 200 within ms
   P->>D: claim conversation lease (SKIP LOCKED), load pending msgs
   P->>P: keyword? emergency pre-filter? opted out? handed off?
   P->>A: run turn (all pending inbound msgs, batched)
@@ -89,11 +94,12 @@ sequenceDiagram
   A->>L: tool result (windows with human-readable labels)
   L-->>A: reply text
   A->>A: output guard (no prices, GSM-7, ≤ 459 chars)
-  A->>T: send SMS via REST API
+  A->>D: queue reply (status queued)
+  P->>T: sendMessage (Bot API), mark sent or failed
   T->>C: "I can do Tue Sep 29 10am-12pm or 1-3pm. Which works?"
 ```
 
-The webhook acknowledges Twilio immediately and the agent runs asynchronously. One turn can take several LLM calls, which risks Twilio's webhook timeout. A process crash mid-turn cannot lose a message: the message row stays `received` until processed, and the queue re-claims it (D-012).
+The webhook acknowledges Telegram immediately and the agent runs asynchronously. One turn can take several LLM calls, and a slow webhook response makes Telegram redeliver the update. The public web chat follows the same steps from the pipeline on, without the webhook hop: the browser posts the message and polls for the reply. The diagram was first drawn for Twilio, and the shape is the same (D-033). A process crash mid-turn cannot lose a message: the message row stays `received` until processed, and the queue re-claims it (D-012).
 
 **Pipeline order.** Each step can end the turn without an LLM call. The order changed in Phase 1: the emergency pre-filter now runs *before* the opted-out and handoff gates (D-025, D-028).
 
@@ -105,6 +111,8 @@ The webhook acknowledges Twilio immediately and the agent runs asynchronously. O
 6. **Agent loop.** Runs only if steps 1–5 did not end the turn. If it raises, the customer gets the fixed fallback text and the conversation escalates as `system_error`.
 
 A batch can mix these: "HELP" followed by "my AC is broken" gets the help text and an agent turn for the second message.
+
+Phase 5 adds the demo limits between steps 5 and 6 (D-037). Over a limit, the customer gets a fixed text instead of an agent turn. Steps 1–5 still run first, so keywords and safety messages never depend on the demo's budget.
 
 **Claiming work** (D-024). A worker claims a conversation by writing a lease (token plus expiry) in a short transaction, processes it with no transaction held open across LLM calls, and releases the lease. Texts that arrive mid-turn get a follow-up turn before the release (up to three), so a customer who keeps typing is never left waiting on the poller. A crashed worker's lease simply expires. Each tool call commits on its own, so a booking that succeeded stays booked even if a later step of the turn fails.
 
@@ -274,7 +282,7 @@ erDiagram
   CONVERSATION {
     uuid id PK
     uuid customer_id FK
-    string channel "sms, webchat, eval"
+    string channel "sms, webchat, telegram (Phase 5), eval"
     string mode "bot, handoff, closed"
     timestamptz last_activity_at
     timestamptz lease_until "work lease (D-024)"
@@ -314,11 +322,18 @@ erDiagram
 
 Tables not expanded above are `service_types` (code, label, trade, bookable), `window_templates` (weekday, start_local, end_local), `technician_time_off` (tstzrange), `booking_events` (created/rescheduled/cancelled with old and new window and actor), `agent_turns` (trigger messages, steps, outcome, prompt version), and `tool_calls` (name, args, result, status, latency). Migration 0001 (Phase 1) creates the core schema. Migration 0002 (Phase 2) adds `agent_turns` (including `messages`, the turn's slice of the transcript), `llm_calls`, `tool_calls`, and `messages.agent_turn_id`, which links each message to the turn that consumed or wrote it.
 
+**Planned for Phase 5** (one migration, not yet built; not in the diagram above):
+
+- `demo_sandboxes`: token hash, `business_id` (cascade delete), `created_at`, `last_active_at`, creator IP hash. One row per visitor's private copy of the seed business (D-034).
+- `channel_identities`: `(channel, external_id) → customer_id`, unique on `(channel, external_id)`. Links a Telegram chat id to a customer, since Telegram gives no phone number (D-035).
+- `telegram_link_tokens` (or columns on `demo_sandboxes`): single-use, short-lived tokens for the `t.me/<bot>?start=<token>` deep link.
+- `Channel` gains `telegram`.
+
 **Integrity rules enforced by Postgres, not app code** (D-006):
 
 - `bookings`: `EXCLUDE USING gist (technician_id WITH =, time_window WITH &&) WHERE (status = 'confirmed')` (needs `btree_gist`). Two confirmed bookings can never overlap on one technician, regardless of races, retries, or model behavior.
 - `bookings`: partial unique index on `(customer_id, service_type_id, lower(time_window)) WHERE status = 'confirmed'`. A repeated `create_booking` for the same customer, service, and window returns the existing booking instead of creating a second one. This is idempotency by natural key.
-- `messages.provider_sid` is UNIQUE, so Twilio webhook retries are no-ops.
+- `messages.provider_sid` is UNIQUE, so webhook retries are no-ops (Telegram stores `tg:<update_id>`).
 - `customers (business_id, phone_e164)` is UNIQUE.
 - `conversations`: partial unique index on `(customer_id, channel) WHERE mode <> 'closed'`, so two simultaneous first texts from a new number open one conversation.
 
@@ -356,10 +371,11 @@ Budget these at 2× until real token counts replace the assumptions.
 
 **Monthly budget plan (< $10):**
 
-- **LLM, about $5–7.** Roughly 15 dev-split runs plus 2 full Flash runs plus one Pro dev-split comparison, all off-peak.
+- **LLM evals, about $5–7** in the months of Phases 3–4. Roughly 15 dev-split runs plus 2 full Flash runs plus one Pro dev-split comparison, all off-peak.
+- **LLM for the public demo, at most about $3.** A daily cap of $0.10 (D-037), about 20 conversations a day at the estimate above. Once the demo is live, eval runs are occasional, so the two don't peak in the same month.
 - **CI, $0.** No LLM calls on push (D-019).
 - **Hosting, target $0.** Free tiers only: no managed Redis, no paid managed Postgres (D-022).
-- **Twilio, the main risk.** Covered in section 10.
+- **Messaging, $0.** The web chat and Telegram cost nothing per message. Twilio was the main budget risk and is no longer used (D-033).
 
 ## 9. Evaluation design (preview of Phase 3)
 
@@ -399,13 +415,16 @@ These choices are set now because they shape the schema and logging (D-018):
 
 ## 10. Risks and open questions
 
-1. **DeepSeek data residency.** DeepSeek's privacy policy says it processes and stores personal data in the PRC. That is fine for synthetic dev and eval data. For the pilot, friends' real names, addresses, and numbers would go there. Because the adapter is OpenAI-compatible, the same open-weights model can be pointed at a US-hosted endpoint by config. **Owner decision needed before Phase 7, not now.**
-2. **Twilio vs. a $10 budget.** Twilio's free trial allows only verified recipients and **Twilio-provided message templates, not custom bodies**, so real agent replies need a paid account plus US sender registration (A2P 10DLC or toll-free verification), with registration and monthly fees. Exact costs will be verified in Phase 5. This may push the pilot over budget, so it is flagged now. Everything through Phase 4 runs on the web-chat simulator at $0.
-3. **"CANCEL" is a carrier opt-out keyword.** A customer who texts just "Cancel" to cancel an appointment gets opted out by Twilio. We mirror that state (we cannot text them anyway) and word our messages to invite "cancel my appointment". Whether the keyword list can be customized will be checked in Phase 5.
+1. **DeepSeek data residency.** DeepSeek's privacy policy says it processes and stores personal data in the PRC. That is fine for synthetic dev and eval data. Demo visitors may type real names and addresses anyway. Mitigations: the demo asks for made-up details on every page, Telegram gives us no phone number (D-035), and sandboxes are deleted 48 hours after last use (D-034). Because the adapter is OpenAI-compatible, the same open-weights model can be pointed at a US-hosted endpoint by config. **Owner decision needed before the link is shared in Phase 7:** are these mitigations enough, or should the demo run on a US-hosted endpoint?
+2. **Twilio vs. a $10 budget. Resolved by D-033.** Twilio's free trial can't send custom replies, and real sending needs a paid account plus US sender registration. The project drops Twilio and deploys a public web demo plus a Telegram bot, at $0 per message.
+3. **"CANCEL" is a carrier opt-out keyword.** On real SMS, a customer who texts just "Cancel" gets opted out by the carrier. Without Twilio no carrier is involved, but the keyword rules stay on every channel so the agent remains SMS-ready and the evals measure SMS behaviour (D-033). A demo visitor who sends just "cancel" is opted out and can send START. The demo copy invites "cancel my appointment".
 4. **Flash tool-calling quality is unknown.** The evals decide. The fallback is Pro for agent turns only, at about 3× the cost.
 5. **Serverless background work.** Some serverless platforms throttle CPU after a response is returned. Turn processing is written as `process_conversation(id)`, callable from either an in-process worker or an HTTP task endpoint, so the Phase 6 platform choice doesn't force a rewrite.
 6. **Same-family judge.** With one provider, the judge is a DeepSeek model grading DeepSeek. This is mitigated by narrow binary rubrics and human-label calibration, and it is reported as a limitation.
 7. **Safety templates** are drafts written by an engineer, not reviewed by a safety professional.
+8. **A public URL invites abuse.** Scripts can burn the LLM budget or flood sandboxes. Rate limits per sandbox and per IP, plus a daily spend cap, all counted in Postgres (D-037). A CAPTCHA on sandbox creation is held in reserve.
+9. **A sandbox isolation bug would leak one visitor's data to another.** Every demo endpoint resolves the business from the cookie, never from a parameter, and tests check every endpoint across two sandboxes (D-034).
+10. **The Telegram webhook needs public HTTPS.** End-to-end Telegram testing waits for the Phase 6 deployment. Until then the adapter is tested against a fake Telegram API.
 
 ## 11. Repo layout
 
@@ -418,9 +437,10 @@ app/
   domain/              clock, availability, booking, escalation, SMS rules (no LLM imports)
   pipeline/            inbound handling: dedupe, opt-out, handoff, safety pre-filter, agent port
   agent/               loop, tools, executor, context, output guard, prompts/, providers/
-  channels/            webchat now; twilio in Phase 5
-  api/                 web-chat simulator now; webhooks and dashboard API in Phase 5
-dashboard/             React owner dashboard (Phase 5)
+  channels/            webchat now; telegram in Phase 5
+  api/                 web-chat simulator now; demo API and Telegram webhook in Phase 5
+  demo/                sandbox create/clone/cleanup and demo limits (Phase 5)
+dashboard/             React app: demo customer chat and owner dashboard (Phase 5)
 evals/                 scenarios/, simulated customer, graders, runner, reports
 tests/                 pytest; real Postgres, no SQLite (D-017)
 docs/                  DESIGN.md, diagrams/
@@ -429,3 +449,40 @@ docker-compose.yml · Dockerfile · .env.example
 ```
 
 `app/domain` must not import from `app/agent`, `app/pipeline`, or any LLM or HTTP client. That rule enforces "the system works with zero AI in it", and `tests/test_architecture.py` checks it on every run. `app/pipeline` owns the agent *port* (a Protocol) and may not import the agent implementation either.
+
+## 12. Public demo and Telegram (Phase 5 plan)
+
+Without Twilio (D-033), the deployment is a demo site that a visitor can try in seconds. In it the visitor plays **both roles**: they chat as a customer, then switch to the owner dashboard and see the business side of what they just did.
+
+**What the visitor sees.** One page, two tabs:
+
+- **Customer:** a phone-style chat with an "under the hood" panel beside it, showing each turn's tool calls with arguments and results, tokens and cache hits, cost, and the SMS segment count of each reply. There is a "Chat on Telegram" button, a banner asking for made-up names and addresses, and suggestions for what to try (book, reschedule, ask a price, report a gas smell).
+- **Owner:** a calendar of bookings by technician, the escalation inbox with a resolve action, the conversation list with each conversation's channel, and a small stats strip (bookings, escalations, cost per conversation).
+- A **Reset demo** button on both tabs.
+
+**Sandboxes** (D-034).
+
+1. A first visit clones the seed business: technicians, service types, windows, service area, and a few fake bookings dated relative to today. It is stored as a `demo_sandboxes` row and sets an HttpOnly cookie.
+2. Every `/api/demo/*` endpoint resolves the business from the cookie and never from a request parameter. The chat and the dashboard both see only that sandbox.
+3. A cleanup job deletes sandboxes 48 hours after their last activity. Deleting the business cascades. Reset deletes the sandbox and creates a new one.
+
+**Telegram** (D-035).
+
+1. The button opens `t.me/<bot>?start=<link token>`, where the token is single-use and short-lived, separate from the cookie.
+2. On `/start <token>`, the bot links the chat id to the sandbox's customer in `channel_identities`. The visitor is then one customer with two conversations, web and Telegram, both visible in their dashboard.
+3. A chat that isn't linked gets a fresh sandbox, and the bot replies with that sandbox's dashboard link.
+4. Inbound updates go through `handle_inbound` with `provider_sid = tg:<update_id>`. A sender in the worker delivers queued replies with `sendMessage`, retries on failure, and marks each message sent or failed.
+
+**Limits** (D-037). 30 messages per sandbox per hour, 5 new sandboxes per IP per day, and a $0.10 daily LLM cap across the demo, all counted in Postgres. At the cap the agent is replaced by a fixed "the demo is resting" reply. Keywords, the emergency pre-filter, and the dashboard keep working.
+
+**App** (D-036). One Vite + React + TypeScript app in `dashboard/`, served by FastAPI from the same origin as `/api/demo/*`. It polls every 2–3 seconds while visible. The localhost dev simulator stays as it is.
+
+**Build order.**
+
+1. Sandboxes, cleanup, cookie scoping, and the limits. Tests: two sandboxes can't see each other's data through any endpoint, cleanup, each limit.
+2. The demo API, reusing the simulator's turn-inspection code.
+3. The React app: Customer tab, then Owner tab. CI gains frontend type-check, lint, build, and component tests.
+4. The Telegram channel: webhook auth, `/start` linking, duplicate updates, and the send and retry path, all tested against a fake Telegram API so CI stays offline (D-019).
+5. Polish: demo copy, and README screenshots with the eval results.
+
+Steps 1–3 alone make a complete demo. Telegram is tested end to end once Phase 6 gives it a public HTTPS URL.

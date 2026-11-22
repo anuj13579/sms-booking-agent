@@ -234,7 +234,7 @@ Each entry has the following fields:
 - **Revisit if.** The budget grows. A small nightly smoke eval would be the next step.
 
 ## D-020 · Opt-out mirrors carrier keywords, including CANCEL, plus natural phrasing
-*2026-09-26 · Phase 0 · Accepted*
+*2026-09-26 · Phase 0 · Accepted · Phase 5 check moot after D-033 (no Twilio)*
 
 - **Context.**
   - Carriers and Twilio treat exact single-word messages as opt-out: `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`, and newer additions like `OPTOUT` and `REVOKE`.
@@ -259,7 +259,7 @@ Each entry has the following fields:
 - **Revisit if.** Evals show customers referencing prior sessions in ways the DB context doesn't cover.
 
 ## D-022 · Budget-driven infrastructure; the deployment target is chosen at Phase 6
-*2026-09-26 · Phase 0 · Accepted*
+*2026-09-26 · Phase 0 · Accepted · Twilio plan replaced by D-033*
 
 - **Context.** The owner set the all-in budget under $10/month and deferred the cloud choice to Phase 6.
 - **Decision.**
@@ -398,4 +398,110 @@ Each entry has the following fields:
 - **Rejected.** *Relying on the provider's default.* It silently changes cost and behaviour.
 - **Why.** Anything that changes cost should be explicit in our code, not implied by someone else's default.
 - **Revisit if.** The Phase 4 thinking-on experiment shows a task-success gain worth its cost.
+
+## D-033 · No Twilio: the deployment is a public web demo plus a Telegram bot, with SMS rules kept on every channel
+*2026-11-22 · Phase 5 plan · Accepted · Replaces the Twilio plan in D-022; makes the Phase 5 check in D-020 moot*
+
+- **Context.**
+  - This is a portfolio project with friendly testers and no real business (DESIGN §1).
+  - DESIGN §10 flagged Twilio as the main budget risk. The free trial only sends Twilio's own message templates to verified numbers, so it can't deliver agent replies. Real replies need a paid account plus US sender registration (A2P 10DLC or toll-free verification), with registration and monthly fees, on a budget under $10/month.
+  - A reviewer can only try an SMS number that is paid for and running. A link is easier to keep alive and faster to try.
+- **Decision.**
+  - No Twilio in Phases 5–7. The deployment has two customer channels, the public demo web chat and a Telegram bot. The owner side is a web dashboard.
+  - Both channels go through `handle_inbound` (D-013). `Channel` gets a `telegram` value.
+  - The SMS rules stay on every channel: GSM-7 only (D-027), the 459-character cap with the segment count shown (D-029), and the keyword handling, including a bare `CANCEL` (D-020, D-028). The agent stays SMS-ready. If it is ever needed, Twilio is one more adapter.
+  - New phase plan: 5 = sandboxes and limits, demo API, React app, Telegram bot (D-034 to D-037). 6 = deployment. 7 = share the link, collect conversations, write up.
+- **Rejected.**
+  - *Paid Twilio.* Fees and sender-registration paperwork for a project with no real business behind it, and it likely breaks the budget.
+  - *Twilio trial.* Fixed templates to verified numbers only, so the agent's replies can't be sent.
+  - *WhatsApp Business API.* Needs Meta business verification, the same kind of paperwork as Twilio.
+  - *Carrier email-to-SMS gateways.* Unreliable, and some carriers have shut theirs down.
+  - *Web demo only.* It works, but Telegram exercises what Twilio would have: a third-party webhook, signature checking, retried and duplicate deliveries, and outbound sends that can fail.
+- **Why.** Anyone can try the agent in ten seconds from a link, and messages cost nothing. Because the SMS limits are still enforced and measured, "built for SMS" stays a true claim.
+- **Consequences.**
+  - A demo visitor who sends just "cancel" is opted out, and can send START to come back. That keeps one code path and means the evals measure the SMS behaviour. The demo copy asks people to write "cancel my appointment".
+  - Telegram's webhook needs a public HTTPS URL, so end-to-end Telegram testing waits for Phase 6. Until then it is tested against a fake Telegram API.
+  - Telegram allows 4,096 characters per message. The guard still caps replies at 459.
+- **Revisit if.** A real business wants to run it on its own number. Then build the Twilio adapter (signed webhook, REST sends) and redo the CANCEL check from D-020.
+
+## D-034 · Each demo visitor gets their own sandbox business, scoped by a cookie and deleted after 48 hours
+*2026-11-22 · Phase 5 plan · Accepted*
+
+- **Context.**
+  - In the demo the visitor plays both roles: they chat as a customer, then open the owner dashboard to see the business side.
+  - With one shared business, every visitor would see every other visitor's bookings and messages, whatever they typed, and visitors would fill up each other's calendars.
+  - DESIGN §1 says one business per deployment. But every table already carries `business_id`, and the pipeline already takes `business_id` as input.
+- **Decision.**
+  - A first visit creates a sandbox: a copy of Brightwater (technicians, service types, arrival windows, service area) plus a few fake bookings dated relative to today, so the calendar isn't empty.
+  - A new `demo_sandboxes` table holds a hash of the sandbox token, the `business_id`, `created_at`, `last_active_at`, and a hash of the creating IP.
+  - The browser gets the token in an HttpOnly, Secure, SameSite=Lax cookie. Every demo endpoint resolves the business from that cookie, never from a request parameter, on the same principle as D-010.
+  - Each sandbox business gets its own fictional number in some area code's 555-0100 to 555-0199 range, because `businesses.sms_number` is unique and must be E.164.
+  - A sandbox expires 48 hours after its last activity. A cleanup job deletes expired sandboxes, and deleting the business cascades to everything under it. "Reset demo" deletes the sandbox and creates a fresh one.
+  - There is no owner login: holding the cookie means owning the sandbox.
+  - The seed business and the local dev simulator stay as they are.
+- **Rejected.**
+  - *One shared business with a nightly wipe.* Leaks visitors' text to each other, shows junk, and calendars fill up during the day.
+  - *Real accounts with a login.* Reviewers won't sign up to try a demo.
+  - *A schema or database per visitor.* Heavy, and every migration would run once per visitor.
+- **Why.** Isolation uses the `business_id` the schema already carries, and tests can prove that sandbox A never sees sandbox B's data through any endpoint.
+- **Consequence.** DESIGN §1's "one business per deployment" gets an exception: the demo runs many businesses, all clones of the seed. There is still no onboarding, billing, or business settings UI.
+- **Revisit if.** A real business pilots it. Then a real owner login replaces the cookie.
+
+## D-035 · Non-phone channels map to customers through a `channel_identities` table
+*2026-11-22 · Phase 5 plan · Accepted*
+
+- **Context.**
+  - Customers are keyed by `(business_id, phone_e164)`, and `phone_e164` must be valid E.164.
+  - A Telegram bot sees a chat id, not a phone number, unless the person chooses to share their contact.
+  - A visitor should be one customer on web and on Telegram, so their dashboard shows one customer with two conversations.
+- **Decision.**
+  - A new table `channel_identities (channel, external_id, customer_id)`, unique on `(channel, external_id)`.
+  - Web-chat visitors get a fictional phone number as now, so `phone_e164` stays non-null.
+  - The demo page's Telegram button is a deep link, `t.me/<bot>?start=<link token>`. On `/start <link token>`, the chat id is linked to that sandbox's customer.
+  - Link tokens are separate from the cookie token: single-use, short-lived, and within Telegram's limit of 64 characters from `A-Z a-z 0-9 _ -`. The cookie token never appears in a URL.
+  - A message to the bot from a chat that isn't linked creates a fresh sandbox, and the reply includes that sandbox's dashboard link.
+  - Duplicate webhook deliveries are dropped by storing `tg:<update_id>` in the existing unique `messages.provider_sid`.
+- **Rejected.**
+  - *A fake phone number derived from the chat id.* It disguises what kind of identity it is and puts false data in the phone column.
+  - *A `telegram_chat_id` column on `customers`.* One column per channel, and it doesn't generalise.
+  - *Asking users to share their phone contact.* Friction, and personal data the demo doesn't need.
+- **Why.** An identity on a channel is a mapping to a customer, not an attribute of the customer. A Twilio channel would use the same table.
+- **Consequence.** Opt-out stays per customer (`customers.opted_out_at`), so STOP on Telegram also stops replies on the web chat.
+- **Revisit if.** A channel needs state of its own per identity, such as opt-out per channel.
+
+## D-036 · One React app holds the demo chat and the owner dashboard, served by FastAPI
+*2026-11-22 · Phase 5 plan · Accepted*
+
+- **Context.**
+  - The demo needs two views: a customer chat with an "under the hood" panel (tool calls, tokens, cache hits, cost, segments), and the owner dashboard (calendar, escalation inbox, conversations, stats).
+  - DESIGN §2 already commits to a React dashboard, and §11 reserves `dashboard/`. The dev simulator is one HTML file with plain JavaScript.
+- **Decision.**
+  - One Vite + React + TypeScript app in `dashboard/`, with a Customer tab and an Owner tab.
+  - FastAPI serves the built files and the `/api/demo/*` JSON from the same origin, so the cookie needs no CORS setup and there is one service to deploy.
+  - Live updates come from polling every 2–3 seconds while the tab is visible, as the simulator already does.
+  - CI adds type-checking, linting, a build, and a few component tests for the frontend.
+  - The dev simulator stays as plain HTML for local work.
+- **Rejected.**
+  - *Two separate apps.* Two deploys, and shared pieces duplicated.
+  - *Server-rendered templates or HTMX.* Workable, but the calendar and the turn inspector are interaction-heavy, and §2 already chose React.
+  - *Hosting the frontend separately.* Needs CORS and cross-site cookies.
+  - *WebSockets or server-sent events.* Polling is enough at demo volume and needs nothing new from the host.
+- **Why.** One deployable unit and one origin keep the security model simple: the cookie is the only credential.
+- **Revisit if.** Polling load matters, or the Phase 6 host charges per request.
+
+## D-037 · Abuse and cost limits are enforced in Postgres
+*2026-11-22 · Phase 5 plan · Accepted*
+
+- **Context.** The demo is a public URL. Every agent turn costs DeepSeek money, the budget is under $10/month, and there is no Redis (D-022).
+- **Decision.** Every limit is computed from tables we already write, and every number is config. Starting values:
+  - **Messages:** 30 inbound messages per sandbox per hour, counted from `messages`.
+  - **Sandboxes:** 5 new sandboxes per IP hash per day, counted from `demo_sandboxes`.
+  - **Daily LLM spend:** $0.10 across the whole demo (about $3 a month), summed from `llm_calls.cost_usd`. Once it's reached, the pipeline sends a fixed "the demo is resting, try again tomorrow" reply instead of running the agent. Keywords and the emergency pre-filter still run, because they cost nothing, and the dashboard keeps working.
+  - Telegram webhook requests without the right `X-Telegram-Bot-Api-Secret-Token` header are rejected.
+- **Rejected.**
+  - *Redis or an in-memory limiter.* Either an extra service, or counts that reset on restart and diverge across instances.
+  - *Letting the prepaid DeepSeek balance run out.* The demo would be dead for the rest of the month.
+  - *A CAPTCHA.* Friction for every visitor. Kept in reserve.
+- **Why.** Postgres already holds the counts, and one extra query per inbound message is nothing at demo volume.
+- **Revisit if.** Abuse gets through the limits (then add a CAPTCHA on sandbox creation), or real visitors hit the daily cap routinely.
 

@@ -1,6 +1,6 @@
 # SMS Booking Agent: Design (Phase 0)
 
-Status: Phase 0 design, updated with Phase 1 and Phase 2 findings (2026-09-29) and the Phase 5 channel plan: no Twilio, a public demo and a Telegram bot instead (2026-11-22) · Decision IDs (D-xxx) refer to [`DECISIONS.md`](../DECISIONS.md)
+Status: Phase 0 design, updated with Phase 1 and Phase 2 findings (2026-09-29), the Phase 5 channel plan (no Twilio; a public demo and a Telegram bot instead), and the Phase 3 eval harness (2026-11-22) · Decision IDs (D-xxx) refer to [`DECISIONS.md`](../DECISIONS.md)
 
 ## 1. Problem and goals
 
@@ -377,9 +377,9 @@ Budget these at 2× until real token counts replace the assumptions.
 - **Hosting, target $0.** Free tiers only: no managed Redis, no paid managed Postgres (D-022).
 - **Messaging, $0.** The web chat and Telegram cost nothing per message. Twilio was the main budget risk and is no longer used (D-033).
 
-## 9. Evaluation design (preview of Phase 3)
+## 9. Evaluation design
 
-These choices are set now because they shape the schema and logging (D-018):
+Set in Phase 0 because they shape the schema and logging (D-018), and built in Phase 3 (D-038 to D-042). How the harness works in practice is at the end of this section.
 
 - **Scenarios** are YAML files, targeting 250 total:
 
@@ -413,6 +413,17 @@ These choices are set now because they shape the schema and logging (D-018):
   - Double-booking count, both constraint-violation attempts and a post-hoc overlap query.
   - Average turns, and cost and latency per conversation (p50/p95), taken from the same `llm_calls` table production uses.
 
+**How the harness works (Phase 3).**
+
+- **One run of one scenario.** A fresh copy of Brightwater is created under its own number, and the fixture is built on it through the domain services with the scenario's frozen clock (D-038). The customer's messages go through `handle_inbound` with `Channel.EVAL`. The clock moves a minute between messages. Afterwards the trace is read back from the production tables, and the run is graded. Runs go concurrently, four at a time by default, against a separate `booking_agent_eval` database wiped at the start of each run.
+- **Scenario files.** `evals/scenarios/<category>.yaml`, with per-file defaults. Times without an offset are Brightwater's local time, converted per date. Expectations name what must be true at the end: new bookings (count, service, acceptable windows, address, ZIP, urgency), what happened to each fixture booking, escalation reasons required or forbidden, the emergency hazard, the safety message in the reply to the disclosing text, opt-out state, and reply regexes. `python -m evals validate` checks every scenario against the seed business: windows that can't be booked, unknown services or technicians, scripted customers where D-018 requires them, and the 70/30 split per category.
+- **Universal checks** on every run: no double-booking, no agent failure, no price in model-written text, SMS limits, silence after an opt-out, and silence once the owner has the conversation. A run passes when every check passes (D-039).
+- **Category definitions are tested.** Each clear emergency's disclosing text must trip the pre-filter, and no subtle emergency's text may. So the clear category measures the deterministic layer plus the templates, and the subtle one measures the model.
+- **The simulated customer** gets the scenario's date and time, the persona, and the rule to answer `[DONE]` when finished. It stops when the business goes silent (a handoff), and it is caught breaking character by patterns and by the judge (D-040).
+- **The judge** makes one call per transcript with five yes/no questions, reported separately and marked uncalibrated. The in-character question is asked only about simulated customers (D-041).
+- **Outputs.** `evals/runs/<run id>/` holds `run.json` (model, temperature, prompt version, git commit, split, milestone), `results.jsonl` (one full trace per run), `summary.json`, and `report.md`. `python -m evals report` rebuilds the last two from the results, so metric definitions can change without re-running.
+- **Cost.** The CLI refuses a run whose estimate tops `--max-cost` and stops starting conversations once real spend reaches it (D-042). The first two live runs, 16 dev scenarios each (2026-11-22), cost about $0.0005 a conversation all-in, with an 86-92% prompt cache hit rate.
+
 ## 10. Risks and open questions
 
 1. **DeepSeek data residency.** DeepSeek's privacy policy says it processes and stores personal data in the PRC. That is fine for synthetic dev and eval data. Demo visitors may type real names and addresses anyway. Mitigations: the demo asks for made-up details on every page, Telegram gives us no phone number (D-035), and sandboxes are deleted 48 hours after last use (D-034). Because the adapter is OpenAI-compatible, the same open-weights model can be pointed at a US-hosted endpoint by config. **Owner decision needed before the link is shared in Phase 7:** are these mitigations enough, or should the demo run on a US-hosted endpoint?
@@ -441,7 +452,9 @@ app/
   api/                 web-chat simulator now; demo API and Telegram webhook in Phase 5
   demo/                sandbox create/clone/cleanup and demo limits (Phase 5)
 dashboard/             React app: demo customer chat and owner dashboard (Phase 5)
-evals/                 scenarios/, simulated customer, graders, runner, reports
+evals/                 scenario schema, fixtures, runner, customers, graders, judge, metrics, CLI
+  scenarios/           250 scenarios, one YAML file per category
+  runs/                run outputs (git-ignored)
 tests/                 pytest; real Postgres, no SQLite (D-017)
 docs/                  DESIGN.md, diagrams/
 DECISIONS.md · RESULTS.md (Phase 4) · README.md

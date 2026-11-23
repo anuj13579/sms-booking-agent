@@ -505,3 +505,83 @@ Each entry has the following fields:
 - **Why.** Postgres already holds the counts, and one extra query per inbound message is nothing at demo volume.
 - **Revisit if.** Abuse gets through the limits (then add a CAPTCHA on sandbox creation), or real visitors hit the daily cap routinely.
 
+## D-038 · Each eval run gets its own copy of the seed business, in a database wiped per run
+*2026-11-22 · Phase 3 · Accepted · Implements D-013 and D-018*
+
+- **Context.** A scenario pins a frozen clock and a starting state (a returning customer, existing bookings, booked-out windows, technician time off). 250 scenarios, each a multi-turn conversation of several LLM calls, take hours one after another. Runs must not see each other's rows.
+- **Decision.**
+  - Each scenario run creates a fresh copy of Brightwater under its own number (`create_brightwater` in `app/seed.py`, which the Phase 5 sandboxes will reuse, D-034). Everything a run writes hangs off that business, so runs go concurrently (default 4) and the trace is "everything in this business".
+  - Fixtures are built through the real domain services (`create_booking` with the scenario's clock), so a fixture can't describe a state the product couldn't reach. "Busy" windows are filled with other customers' bookings until the domain itself says `slot_unavailable`.
+  - Conversations go through `handle_inbound` with `Channel.EVAL`, exactly as SMS would. The trace is read back from the same tables production writes: `messages`, `bookings`, `escalations`, `agent_turns`, `llm_calls`, `tool_calls`.
+  - Eval runs use their own database (`EVAL_DATABASE_URL`, default `booking_agent_eval`), wiped and migrated at the start of every run, and refused unless its name ends in `_eval`. The rows stay afterwards for inspection.
+- **Rejected.**
+  - *Truncating between scenarios.* Forces serial runs: hours per full suite.
+  - *A transaction per scenario, rolled back.* Each tool call commits on its own by design (D-031), so there is no single transaction to roll back.
+  - *Sharing the dev or test database.* Wipes someone's data, or gets wiped by the test suite mid-run.
+- **Why.** Isolation comes from the `business_id` the schema already carries, which also means the harness exercises the same multi-business shape the demo will.
+- **Revisit if.** Provider rate limits make concurrency pointless, or a scenario needs state that only a direct insert can create.
+
+## D-039 · What "passed" means, and what each headline metric counts
+*2026-11-22 · Phase 3 · Accepted · Details D-018*
+
+- **Context.** DESIGN §1 sets targets for task success, emergency handling, correct escalation, double-bookings, and cost. Each needs a definition precise enough that a failure can be traced to one check.
+- **Decision.**
+  - Every run gets **universal checks**: no double-booking (a post-hoc overlap query), no agent failure (no failed turn and no `system_error` escalation), no price in any model-written reply, every message within SMS limits, nothing sent to an opted-out customer except the opt-in confirmation, and no model reply after the owner has the conversation.
+  - Each scenario's `expect` block adds its own checks: bookings created and confirmed (service, window, address, ZIP, urgency), what happened to fixture bookings, which escalation reasons are required or forbidden, the emergency hazard, the safety message in the reply to the disclosing text, opt-out state, and reply regexes.
+  - A run **passes** when every check passes. Task success is the pass rate over normal booking, reschedule, and cancel. Emergency handling is the pass rate over clear and subtle emergencies, with misses listed by id. Correct escalation is the pass rate of the escalation checks over scenarios that grade escalation; precision and recall count any non-system escalation as "escalated". Cost per conversation is the agent's spend only.
+  - A `system_error` escalation never counts as a correct escalation: it means the agent failed.
+  - Runs where the harness failed (a fixture the domain refused) or the simulated customer broke character are excluded from every rate and counted separately.
+  - Category definitions are tested, not assumed: every clear emergency's disclosing text must trip the pre-filter, and no subtle emergency's text may, so the two categories measure different detectors.
+- **Rejected.**
+  - *Partial credit per check.* A booking in the wrong window is a failed booking. Averaging hides that.
+  - *Letting the judge decide pass or fail.* The database is the ground truth (D-018).
+- **Why.** One definition per metric, each traceable to named checks, so a regression shows up as a specific check failing.
+- **Revisit if.** A category's pass rate is dominated by a universal check unrelated to its purpose. Then report that check separately.
+
+## D-040 · The simulated customer: fixed opening, a [DONE] signal, and failures excluded
+*2026-11-22 · Phase 3 · Accepted · Details D-018*
+
+- **Context.** Adaptive scenarios need a customer who answers the agent's questions with the persona's facts. An LLM playing a customer can also go wrong: talk like an assistant, mention being an AI, or never stop.
+- **Decision.**
+  - The first message is fixed in the scenario, so every run of a scenario starts identically. After that, a model plays the persona: situation, goal, facts to share when asked, availability, and texting style. It sees the business's texts as the user and writes the customer's as the assistant.
+  - It ends the conversation by writing `[DONE]` (after an optional short thank-you). The conversation also ends when the business sends nothing back (a handoff: a real customer waits for the owner), or after the scenario's `max_turns`.
+  - It is told the scenario's local date and time, so "tomorrow" means what the agent's context note says it means.
+  - Breaking character is caught by patterns (AI talk, role-play talk, writing the business's side, very long texts) and by one judge question. Either flags the run, and it is excluded with a count.
+  - It uses the agent's model by default, at temperature 0.7.
+- **Rejected.**
+  - *Scripted customers everywhere.* A scripted customer can't answer the questions the agent happens to ask.
+  - *Grading the simulator's failures as agent failures.* A confused simulator would make the agent look worse than it is, or better.
+- **Why.** The scenario fixes what can be fixed, the opening and the persona, and the simulator's failures are visible instead of being silently mixed into the agent's numbers.
+- **Revisit if.** More than about 5% of runs are excluded for the simulator. Then use a stronger model for the customer.
+
+## D-041 · The judge reports alongside the pass rates and never changes them
+*2026-11-22 · Phase 3 · Accepted · Details D-018*
+
+- **Context.** Some qualities can't be read from the database: SMS style, politeness, promises with no basis, asking one thing at a time. The judge is a DeepSeek model grading DeepSeek (DESIGN §10, risk 6), and it hasn't been checked against human labels yet.
+- **Decision.**
+  - One judge call per transcript answers five yes/no questions (`sms_style`, `polite`, `no_unfounded_promise`, `one_question`, and `customer_in_character`, which checks the simulator, not the agent). A malformed reply gets one retry, then the run is reported without judge answers.
+  - Judge answers appear in their own report section, marked uncalibrated, and never change whether a run passes.
+  - `python -m evals label` samples about 40 transcripts, stratified by category, into a file for a person to label. The file leaves out the judge's answers so they can't anchor the labels. `python -m evals calibrate` reports agreement and Cohen's kappa per question.
+- **Rejected.**
+  - *A 1-10 quality score.* Uncalibrated and noisy (D-018).
+  - *Folding the judge into pass/fail.* An uncalibrated grader would move the headline numbers.
+- **Why.** The judge adds information without the power to change the result, until a human has checked it.
+- **Revisit if.** Calibration shows strong agreement (kappa above about 0.6) on a question. That question can then become a real check.
+
+## D-042 · Splits are explicit, test runs are milestones, and every run is capped
+*2026-11-22 · Phase 3 · Accepted · Details D-018 and D-019*
+
+- **Context.** D-018 asks for a stratified 70/30 dev/test split, with the test split run only at milestones. The budget is under $10/month.
+- **Decision.**
+  - Each scenario carries its split in its YAML. Validation checks every category is within one scenario of 70/30. Adding a scenario never silently moves another between splits.
+  - `--split test` refuses to run without `--milestone NAME`, which is recorded in the run's metadata.
+  - Before a run, the CLI estimates its cost ($0.01 a conversation on Flash, from the DESIGN §8 estimate with its 2x margin) and refuses if that's over `--max-cost` (default $2, enough for the dev split at that estimate). During the run, no new conversation starts once actual spend reaches the cap.
+  - Spend is reported in three parts (agent, simulated customer, judge), from the providers' own usage.
+  - Every run records the model, temperature, thinking setting, prompt version, git commit and whether the tree was dirty, so a result can be tied to the exact code and prompt that produced it.
+- **Rejected.**
+  - *Assigning splits by hashing the id.* Not stratified.
+  - *Assigning splits by rank within each category.* Adding one scenario reshuffles others.
+  - *A confirmation prompt instead of a cap.* CI can't answer prompts.
+- **Why.** Overfitting to the test split and overspending are both prevented in code rather than by remembering to be careful.
+- **Revisit if.** The estimate is far from real spend. The first two 16-scenario runs (2026-11-22) spent about $0.0005 a conversation all-in, twenty times under it, but over short conversations (2.4 customer messages on average). A full dev run will show whether that holds before the estimate changes.
+

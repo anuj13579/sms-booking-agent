@@ -2,7 +2,7 @@
 
 An SMS agent for small HVAC, plumbing, and electrical businesses. It answers customer texts, books real technician arrival windows, handles reschedules and cancellations, and hands off to the owner for emergencies, price questions, and anything it isn't sure about.
 
-**Status:** Phase 2 (agent loop and web-chat simulator) built and tested offline. The LLM agent runs on DeepSeek through an OpenAI-compatible adapter, behind the deterministic pipeline from Phase 1. It has not yet been measured against the real model at scale; that is Phase 3.
+**Status:** Phase 3 (the eval harness) built: 250 scenarios, deterministic graders, a simulated customer, an LLM judge, and confidence intervals on every rate. A first 16-scenario live check passed 15 of 16 for under two cents; the full baseline and the work on its failures are Phase 4.
 
 ## Documents
 
@@ -15,7 +15,7 @@ An SMS agent for small HVAC, plumbing, and electrical businesses. It answers cus
 0. Design ✅
 1. Core domain, no LLM ✅
 2. Agent loop, plus the web-chat simulator ✅
-3. Eval harness
+3. Eval harness ✅
 4. Iterate on eval results
 5. Public demo: per-visitor sandboxes, the owner dashboard, and a Telegram bot
 6. Deployment
@@ -29,6 +29,19 @@ An SMS agent for small HVAC, plumbing, and electrical businesses. It answers cus
 - One React app holds the customer chat (with an "under the hood" panel for tool calls, tokens, and cost) and the owner dashboard.
 - A Telegram bot is a second way to chat. Its link connects the Telegram chat to the visitor's sandbox, so those conversations show up in the same dashboard.
 - Rate limits and a daily LLM spend cap are counted in Postgres.
+
+## What Phase 3 built
+
+- **250 scenarios** (`evals/scenarios/`) in the eleven categories of DESIGN §9: normal booking 50, ambiguous 35, reschedule 25, cancel 20, angry 20, clear emergency 20, subtle emergency 15, emergency look-alike 15, price 20, off-topic and prompt injection 20, opt-out 10. Each pins a frozen clock and a starting state (a returning customer, existing bookings, booked-out windows, technician time off), and says what must be true at the end. Each carries its dev/test split, stratified 70/30.
+- **A harness that runs the production path** (`evals/`). Every run gets its own copy of the seed business, and its messages go through the same `handle_inbound` the channels use (D-013, D-038). Runs go concurrently against a separate `_eval` database.
+- **Deterministic grading** (D-039). The database and the tool-call trace decide: which bookings exist, in which windows, at which address; what happened to existing bookings; which escalations were raised; whether the safety message went out in the reply to the disclosing text; whether anything was texted to an opted-out customer. Saying "you're booked" without a booking row fails.
+- **Customers.** Scripted ones for emergencies, opt-outs, and injection attempts; an LLM playing a persona for everything adaptive, with a fixed opening and a `[DONE]` signal. Runs where it breaks character are excluded and counted (D-040).
+- **A judge that can't move the numbers** (D-041). Five yes/no questions about style, politeness, and unfounded promises, reported separately and marked uncalibrated until checked against human labels (`python -m evals label` / `calibrate`).
+- **Honest statistics.** Wilson 95% intervals on every rate, a verdict per target ("meets", "below", or "inconclusive" when the interval spans it), repeats with flakiness detection, and the test split locked behind `--milestone` (D-042).
+- **Cost control.** An upfront estimate refuses runs over `--max-cost`, and live spend stops new conversations at the cap.
+- **Tests.** 62 new ones (393 in all), still at $0: the harness tests itself with a scripted FakeProvider standing in for the agent's model and the simulated customer. A test checks that every "clear" emergency trips the pre-filter and no "subtle" one does, so the two categories measure different detectors.
+
+One finding from the first live run: "my furnace won't **fire** up" trips the pre-filter's fire pattern, so a routine heating job gets an electrical safety message and goes to the owner. The look-alike category exists to measure exactly this; the fix belongs to Phase 4.
 
 ## What Phase 2 built
 
@@ -62,6 +75,7 @@ uv run alembic upgrade head           # create the schema
 uv run python -m app.seed             # the fictional pilot business, Brightwater Home Services
 uv run python scripts/demo.py         # availability, a booking, and the pipeline, no LLM needed
 uv run pytest                         # the test suite (wipes and rebuilds booking_agent_test)
+uv run python -m evals validate       # check the 250 scenarios; no DB or LLM needed
 ```
 
 To talk to the agent, copy `.env.example` to `.env`, set `DEEPSEEK_API_KEY`, then:
@@ -71,6 +85,18 @@ uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 Open http://127.0.0.1:8000 for the web-chat simulator. It is for development only: it lets anyone text the agent as any number, so keep it on localhost (`SIMULATOR_ENABLED=false` turns it off).
+
+Eval runs need `DEEPSEEK_API_KEY` too. Each one wipes and rebuilds `booking_agent_eval` (or `EVAL_DATABASE_URL`) and writes its results, `summary.json`, and `report.md` to `evals/runs/<run id>/`:
+
+```bash
+uv run python -m evals run --split dev                            # 174 conversations; refuses if the estimate tops --max-cost ($2)
+uv run python -m evals run --category clear_emergency --repeat 3  # one category, three runs each
+uv run python -m evals run --id nb-001 --id la-004                # specific scenarios
+uv run python -m evals report evals/runs/<run id>                 # rebuild a report after changing metrics
+uv run python -m evals run --split test --milestone "phase-4"     # the held-out split, milestones only
+```
+
+The same runs can be started from GitHub (Actions, "Evals", manual dispatch) with the `DEEPSEEK_API_KEY` repository secret.
 
 `uv run python scripts/smoke_live.py` runs six fixed conversations against the real model (booking, cancel, price question, a subtle emergency, out of scope, prompt injection) with deterministic checks. It costs well under a cent on `deepseek-flash`. It is a smoke test, not an eval.
 

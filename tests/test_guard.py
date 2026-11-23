@@ -2,7 +2,13 @@
 
 import pytest
 
-from app.agent.guard import check_reply, feedback, mentions_price, normalise
+from app.agent.guard import (
+    check_reply,
+    feedback,
+    mentions_price,
+    normalise,
+    promises_owner_follow_up,
+)
 from app.domain.sms import MAX_SMS_LENGTH
 
 
@@ -68,3 +74,43 @@ def test_feedback_says_it_is_not_from_the_customer() -> None:
     text = feedback(["it mentions a price"])
     assert text.startswith("[Automatic check, not from the customer]")
     assert "it mentions a price" in text
+
+
+# --------------------------------------------------------------------------------------------
+# unbacked follow-ups (eval scenarios la-001, la-013)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I'll have Dana reach out to set that up.",
+        "Dana will be in touch about the estimate.",
+        "Dana'll text you soon.",
+        "I've passed this to Dana.",
+        "Dana is going to call you this afternoon.",
+        "Thanks. I have passed your request along to Dana.",
+    ],
+)
+def test_owner_follow_up_promises_are_spotted(text: str) -> None:
+    assert promises_owner_follow_up(text, "Dana")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Dana can't do Sundays, but Monday works.",
+        "The technician will text you when they're on the way.",
+        "Dana runs the business with a small team.",
+        "Danaher will call",  # another name that starts the same
+    ],
+)
+def test_other_sentences_are_not_follow_up_promises(text: str) -> None:
+    assert not promises_owner_follow_up(text, "Dana")
+
+
+def test_a_follow_up_promise_needs_an_escalation_behind_it() -> None:
+    text = "New installs need an estimate, so I'll have Dana reach out."
+    rejected = check_reply(text, owner="Dana", follow_up_backed=False)
+    assert not rejected.ok
+    assert "call escalate_to_owner first" in rejected.problems[0]
+    assert check_reply(text, owner="Dana", follow_up_backed=True).ok

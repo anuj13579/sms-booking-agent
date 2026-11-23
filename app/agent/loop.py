@@ -41,7 +41,15 @@ from app.agent.executor import SKIPPED, Scope, ToolExecutor, ToolOutcome, parse_
 from app.agent.prompts import SYSTEM_PROMPT_NAME, prompt_version, system_template
 from app.agent.providers.base import LLMError, LLMProvider, LLMResult, Message, ToolChoice
 from app.agent.tools import tool_specs
-from app.db.models import AgentTurn, Business, Conversation, Customer, LLMCall, ToolCallRecord
+from app.db.models import (
+    AgentTurn,
+    Business,
+    Conversation,
+    Customer,
+    Escalation,
+    LLMCall,
+    ToolCallRecord,
+)
 from app.domain.booking import upcoming_bookings
 from app.domain.clock import Clock
 from app.domain.conversations import transcript
@@ -80,6 +88,7 @@ class _Prepared:
     messages: list[Message]  # system prompt + replayed history + this turn's user message
     user: Message
     tools: list[dict[str, Any]]
+    owner_name: str
 
 
 @dataclass
@@ -218,6 +227,7 @@ class Agent:
                 messages=[system, *merge_adjacent_user_messages([*history, user])],
                 user=user,
                 tools=tool_specs(profile.service_codes),
+                owner_name=business.owner_name,
             )
 
     # ----------------------------------------------------------------------------------------
@@ -248,7 +258,14 @@ class Agent:
                     return finish
                 continue
 
-            checked = guard.check_reply(result.content)
+            backed = True
+            if guard.promises_owner_follow_up(
+                guard.normalise(result.content or ""), prepared.owner_name
+            ):
+                backed = await self._has_escalation(prepared.scope.conversation_id)
+            checked = guard.check_reply(
+                result.content, owner=prepared.owner_name, follow_up_backed=backed
+            )
             if checked.ok:
                 message = result.assistant_message()
                 message["content"] = checked.text
@@ -262,6 +279,15 @@ class Agent:
             state.messages.append(result.assistant_message())
             state.messages.append({"role": "user", "content": guard.feedback(checked.problems)})
         return _Finish(AgentTurnOutcome.STEP_LIMIT, error=f"no reply after {max_steps} LLM calls")
+
+    async def _has_escalation(self, conversation_id: uuid.UUID) -> bool:
+        """Anything escalated in this conversation, by any turn: a price question escalated
+        earlier backs a later "Dana will follow up about pricing"."""
+        async with self._sessionmaker() as session:
+            found = await session.scalar(
+                select(Escalation.id).where(Escalation.conversation_id == conversation_id).limit(1)
+            )
+        return found is not None
 
     async def _call(
         self,

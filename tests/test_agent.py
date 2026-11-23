@@ -346,9 +346,13 @@ async def test_human_request_hands_off_with_the_handoff_template(h: Harness) -> 
 
 
 async def test_rejected_reply_is_rewritten_once(h: Harness) -> None:
-    h.provider.add(reply("A visit is $89."), reply("Dana will follow up about pricing."))
+    # The rewrite must not promise an owner follow-up either: nothing was escalated.
+    h.provider.add(
+        reply("A visit is $89."),
+        reply("I can't quote prices by text. Want me to find a time for a visit?"),
+    )
     outcome = await h.send("what do you charge")
-    assert outcome.replies == ["Dana will follow up about pricing."]
+    assert outcome.replies == ["I can't quote prices by text. Want me to find a time for a visit?"]
     retry = h.provider.requests[1].messages
     assert retry[-2] == {"role": "assistant", "content": "A visit is $89."}
     assert retry[-1]["content"].startswith("[Automatic check, not from the customer]")
@@ -356,7 +360,7 @@ async def test_rejected_reply_is_rewritten_once(h: Harness) -> None:
     # The customer never saw the rejected text, so later turns don't either.
     [turn] = await h.all(AgentTurn)
     assert [m["content"] for m in turn.messages if m["role"] == "assistant"] == [
-        "Dana will follow up about pricing."
+        "I can't quote prices by text. Want me to find a time for a visit?"
     ]
 
 
@@ -524,7 +528,7 @@ async def test_unexpected_crash_still_records_the_turn(
 ) -> None:
     from app.agent import loop
 
-    def explode(raw: str | None) -> Any:
+    def explode(raw: str | None, **kwargs: Any) -> Any:
         raise RuntimeError("guard bug")
 
     monkeypatch.setattr(loop.guard, "check_reply", explode)
@@ -711,3 +715,53 @@ async def test_totals_add_up_per_turn(h: Harness) -> None:
     calls = await h.all(LLMCall)
     assert sum((c.cost_usd for c in calls), Decimal(0)) == 2 * calls[0].cost_usd
     assert all(c.input_tokens == 2000 and c.cache_hit_tokens == 1500 for c in calls)
+
+
+# --------------------------------------------------------------------------------------------
+# Phase 4: unbacked follow-ups and placeholder bookings
+
+
+async def test_promising_the_owner_will_follow_up_without_escalating_is_rewritten(
+    h: Harness,
+) -> None:
+    """Eval scenarios la-001 and la-013: "I'll have Dana reach out" with nothing escalated, so
+    the owner never heard about it."""
+    h.provider.add(
+        reply("New installs need an estimate, so I'll have Dana reach out."),
+        tool("escalate_to_owner", {"reason": "price_quote", "summary": "Wants a panel upgrade"}),
+        reply("Dana will reach out to set up an estimate."),
+    )
+    outcome = await h.send("can you upgrade my fuse box to a breaker panel?")
+    assert outcome.replies == ["Dana will reach out to set up an estimate."]
+    feedback = h.provider.requests[1].messages[-1]["content"]
+    assert "call escalate_to_owner first" in feedback
+    [escalation] = await h.all(Escalation)
+    assert escalation.reason == EscalationReason.PRICE_QUOTE
+
+
+async def test_an_earlier_escalation_backs_a_later_follow_up_promise(h: Harness) -> None:
+    h.provider.add(
+        tool("escalate_to_owner", {"reason": "price_quote", "summary": "Asks AC repair cost"}),
+        reply("I'll pass that to Dana. Want me to find a time meanwhile?"),
+    )
+    await h.send("how much is an AC repair?")
+    h.provider.add(reply("No problem. Dana will follow up about pricing."))
+    outcome = await h.send("not yet, thanks")
+    assert outcome.replies == ["No problem. Dana will follow up about pricing."]
+    assert len(h.provider.requests) == 3  # no rewrite was needed
+
+
+async def test_a_placeholder_address_is_refused_and_nothing_is_booked(h: Harness) -> None:
+    """Eval scenarios amb-025 and amb-026: the model "penciled in" a booking with address
+    "Pending" before the customer had given one."""
+    h.provider.add(
+        availability(earliest_date="2026-10-06", latest_date="2026-10-06"),
+        book(address="Pending", customer_name="Customer"),
+        reply("Before I lock that in, what's your name and street address?"),
+    )
+    outcome = await h.send("can someone fix my AC tomorrow at 8?")
+    assert outcome.replies == ["Before I lock that in, what's your name and street address?"]
+    result = h.tool_result(-1)
+    assert result["error"] == "invalid_arguments"
+    assert "placeholder" in result["message"]
+    assert await h.all(Booking) == []

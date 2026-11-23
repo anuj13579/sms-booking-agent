@@ -9,12 +9,13 @@ Descriptions are part of the prompt. Changing one changes the prompt version (se
 """
 
 import copy
+import re
 from collections.abc import Sequence
 from datetime import date
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.availability import PartOfDay
 from app.domain.enums import EscalationReason, Hazard, Urgency
@@ -43,6 +44,24 @@ class GetAvailabilityArgs(_Args):
     )
 
 
+# Stand-ins a model writes when it books before it has the details ("penciled in" with address
+# "Pending" in eval scenarios amb-025 and amb-026). Rejecting them makes it ask the customer.
+_PLACEHOLDER = re.compile(
+    r"^\W*(?:pending|pendiente|tbd|tba|tbc|to be (?:confirmed|determined|provided)|unknown|"
+    r"n/?a|none|null|placeholder|not (?:provided|given|yet)|ask(?: customer)?|customer|name|"
+    r"address|street|desconocid[oa]|por confirmar|x+|\?+|-+)\W*$",
+    re.IGNORECASE,
+)
+_PLACEHOLDER_ANYWHERE = re.compile(r"\b(?:placeholder|tbd|pending|to be confirmed)\b", re.I)
+_ASK = "ask the customer for it; don't book until you have the real value"
+
+
+def _real(value: str, what: str) -> str:
+    if _PLACEHOLDER.match(value) or _PLACEHOLDER_ANYWHERE.search(value):
+        raise ValueError(f"{what} {value!r} is a placeholder: {_ASK}")
+    return value
+
+
 class CreateBookingArgs(_Args):
     service_type: str = Field(description="Service code from the business profile.")
     slot_id: str = Field(
@@ -64,6 +83,19 @@ class CreateBookingArgs(_Args):
         description="urgent if the customer says so or is without heat, cooling, water, or "
         "power; otherwise routine.",
     )
+
+    @field_validator("customer_name")
+    @classmethod
+    def _real_name(cls, value: str) -> str:
+        return _real(value, "customer_name")
+
+    @field_validator("address")
+    @classmethod
+    def _real_address(cls, value: str) -> str:
+        _real(value, "address")
+        if not re.search(r"\d", value):
+            raise ValueError(f"address {value!r} has no house number: {_ASK}")
+        return value
 
 
 class RescheduleBookingArgs(_Args):

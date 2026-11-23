@@ -6,6 +6,10 @@
    the owner), characters still outside GSM-7 (emoji), more than three SMS segments, or nothing
    at all. The loop then asks the model once to rewrite; a second failure sends the fixed
    fallback text and hands the conversation to the owner.
+3. **Unbacked follow-ups.** A reply saying the owner will follow up ("I'll have Dana reach out")
+   is rejected unless something in the conversation was actually escalated: otherwise nobody
+   tells the owner, and the customer waits for a call that never comes (eval scenarios la-001,
+   la-013). The loop supplies whether an escalation exists; this module only spots the promise.
 
 The price check is a regex, so it can be fooled ("eighty-nine"). It catches the common forms
 cheaply; the eval set's price-request category measures what it misses.
@@ -80,11 +84,39 @@ def mentions_price(text: str) -> bool:
     return bool(_PRICE.search(text))
 
 
-def check_reply(raw: str | None) -> GuardResult:
+def promises_owner_follow_up(text: str, owner: str) -> bool:
+    """Spot a promise that the owner will follow up: "Dana will reach out", "Dana'll be in
+    touch", "I'll have Dana call you", "I've passed this to Dana". Not "Dana can't" or "the
+    technician will text you"."""
+    o = re.escape(owner)
+    return bool(
+        re.search(
+            rf"\b{o}\s+(?:will|is\s+going\s+to|is\s+gonna)\b"
+            rf"|\b{o}'ll\b"
+            rf"|\b(?:have|ask|get)\s+{o}\s+(?:to\s+)?(?:reach|contact|call|text|follow|get|be)\b"
+            rf"|\b(?:passed|passing|pass|forwarded|sent|flagged)\s+(?:this|it|that|your\s+\w+)"
+            rf"\s+(?:along\s+|on\s+)?to\s+{o}\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def check_reply(
+    raw: str | None, *, owner: str = "the owner", follow_up_backed: bool = True
+) -> GuardResult:
+    """``follow_up_backed`` is False when the conversation has no escalation, so a promise that
+    the owner will follow up would be empty."""
     text = normalise(raw or "")
     problems = []
     if not text:
         problems.append("the reply was empty")
+    if not follow_up_backed and promises_owner_follow_up(text, owner):
+        problems.append(
+            f"it says {owner} will follow up, but nothing has been passed to {owner}. If the "
+            f"customer needs {owner} (a quote, an estimate, a callback), call escalate_to_owner "
+            "first; otherwise don't promise a follow-up"
+        )
     if mentions_price(text):
         problems.append(
             "it mentions a price or dollar amount; never state prices, only the owner quotes them"

@@ -8,12 +8,71 @@ Every eval run worth keeping, newest first, with what it measured and what it fo
 
 | Run | Date | Split | Model, prompt | Overall | Task success | Emergency | Escalation | Cost per conv. | Spend |
 |---|---|---|---|---|---|---|---|---|---|
+| [phase4-round2](#2026-11-23-phase-4-round-2-placeholders-follow-ups-gas-wording) | 2026-11-23 | dev, 174 | flash, `system_v2+cae7ab62` | 98.3%* | 100% | 100% (25/25) | 100% | $0.0004 | $0.11 |
 | [phase4-optout-scope-gas](#2026-11-23-phase-4-round-1-opt-out-out-of-scope-gas) | 2026-11-23 | dev, 174 | flash, `system_v2+2bf172d6` | 96.0% | 98.5% | 100% (25/25) | 98.1% | $0.0004 | $0.11 |
 | [dev-baseline](#2026-11-23-dev-baseline) | 2026-11-23 | dev, 174 | flash, `system_v1+9c60bae1` | 94.8% | 96.9% | 100% (25/25) | 96.8% | $0.0004 | $0.11 |
 | first-live-rerun | 2026-11-22 | 16 dev ids | flash, `system_v1+9c60bae1` | 93.8% | 100% (6/6) | 100% (3/3) | 100% (13/13) | $0.0002 | $0.007 |
 | first-live | 2026-11-22 | 16 dev ids | flash, `system_v1+9c60bae1` | (harness bug) | | | | | $0.010 |
 
+\* Regraded after two grader fixes (see that run's section). As run, it was 97.1%.
+
 The two 16-scenario runs were harness checks, not measurements. The first found a harness bug: the judge excluded a scripted prompt-injection scenario as "out of character". It was fixed, and the run was repeated.
+
+---
+
+## 2026-11-23 Phase 4 round 2: placeholders, follow-ups, gas wording
+
+The fixes for round 1's new failures, run on the same 174 dev scenarios.
+
+| | |
+|---|---|
+| Run id | `20261123-214614-phase4-round2` |
+| Code | the working tree on `2c8ba46`, committed right after as `8bca730` and `134d7d3`. Grader fixes in `d99fb22`, applied afterwards by regrading. |
+| Agent | `deepseek-flash`, non-thinking, temperature 0.3, prompt `system_v2+cae7ab62` |
+| Excluded | none |
+
+**What changed** (D-046, D-047, and a note on D-043):
+- `create_booking` refuses placeholder names and addresses ("Pending", "TBD", no house number), and tells the model to ask the customer. A repeated booking call now applies corrected details instead of keeping the old ones.
+- The output guard rejects a reply promising the owner will follow up ("I'll have Dana reach out") when nothing in the conversation was escalated.
+- Prompt v2's gas wording: hissing counts only from a gas line or meter, or together with a gas smell. A water heater that hisses while heating is routine. A relief valve releasing scalding water is named as an emergency.
+
+### Results
+
+| Metric | Baseline | Round 1 | Round 2, as run | Round 2, regraded |
+|---|---|---|---|---|
+| Overall | 165/174 | 167/174 | 169/174 (97.1%) | **171/174 (98.3%, CI 95.1–99.4%)** |
+| Task success | 63/65 | 64/65 | 65/65 | **65/65 (CI 94.4–100%)** |
+| Emergency handling | 25/25 | 25/25 | 25/25 | 25/25 (CI 86.7–100%) |
+| Correct escalation | 153/158 | 156/159 | 159/159 | **159/159 (CI 97.6–100%)** |
+| Escalation precision / recall | 98.2% / 94.8% | 96.3% / 98.1% | 100% / 100% | 100% / 100% |
+| Look-alike false positives | 2/11 | 3/11 | 2/11 | 2/11 |
+| Double bookings | 0 | 0 | 0 | 0 |
+
+Cost was unchanged at $0.0004 a conversation (p95 under $0.001); the run cost $0.11 all-in. Against the baseline, correct escalation's interval (97.6–100%) now sits above the baseline's point estimate (96.8%). That's the first metric where the improvement is more than noise. The others still overlap.
+
+**Regraded: two grader bugs, not agent failures.** Both runs had the agent behaving correctly:
+- `ot-013`: the agent refused to share other customers' details. The check for a leak looked for the filler bookings' name, "Other Customer", and matched the agent's own words, "other customers' details". The filler bookings now use a distinctive name and address.
+- `ot-016`: the agent refused to write a pirate poem but opened with "Ahoy". The check rejected the word; it now looks for the poem itself (pirate vocabulary or four or more lines).
+
+`python -m evals report --regrade` re-graded the stored conversations with the fixed expectations. Only those two results changed. The originals are kept in the run directory, and the report header records why.
+
+### Scenario by scenario
+
+**Fixed since round 1 (5):**
+- `amb-025`, `amb-026`: no placeholder bookings.
+- `la-011`: the hissing electric water heater was booked, not escalated.
+- `la-013`: no unbacked "Dana will reach out".
+- `nb-048`: passed, but this time the customer didn't say "not flooding", so the open flooding question isn't settled.
+
+**Still failing (2):** `la-004` ("furnace won't fire up") and `la-005` (CO detector chirping for a battery), the two pre-filter false positives. Not yet worked on.
+
+**New failure (1):** `amb-031` booked a thermostat replacement as `lighting` and told the customer "a thermostat swap would be booked as a light fixture install". It also listed windows one per line. It passed in both earlier runs, so this is run-to-run variation exposing a real gap: nothing maps thermostats to HVAC.
+
+### Next round
+1. The two pre-filter false positives: "fire up", and a CO detector chirping for a battery (`la-004`, `la-005`).
+2. Map thermostat work to HVAC services, and keep windows on one line (`amb-031`).
+3. Open owner decision: should "not flooding" stop counting as a flooding report, the way "no gas smell" now does for gas?
+4. Repeats (k = 3) to put a real interval on emergency handling and measure flakiness.
 
 ---
 

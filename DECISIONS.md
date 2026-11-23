@@ -601,6 +601,7 @@ Each entry has the following fields:
   - *Keeping "no gas smell" as an emergency.* A customer answering "do you smell gas?" with "no" would be handed to the owner every time, and the booking lost.
   - *Letting the model decide negations.* The pre-filter runs before the model on purpose (D-003); a model miss there would be a missed leak.
 - **Why.** A missed leak is the worst failure this product has, so the narrowing removes only sentences whose whole meaning is "there is no gas smell", and keeps every phrasing with doubt or a time qualifier.
+- **Refined after the first Phase 4 run.** The first wording, "hissing from a gas line, meter, or appliance", made the model treat a hissing electric water heater as a gas emergency (`la-011`). Hissing now counts only from a gas line or the gas meter, or together with a gas smell. A water heater or pipe that hisses, ticks, or pops while heating, with no gas smell, is listed as routine. A relief valve releasing scalding water, or pipes too hot to touch, is listed as an emergency, so the subtle case `se-010` stays one.
 - **Revisit if.** A real report is missed because of a negation shape, or look-alike runs show other negated hazards ("no sparks", "no smoke") handing routine jobs to the owner.
 
 ## D-044 · Work the business doesn't do gets a polite no, without paging the owner
@@ -625,3 +626,31 @@ Each entry has the following fields:
 - **Rejected.** *Dropping the phrase entirely.* "Take me off your list" is one of the most common ways people opt out, and consent rules expect reasonable phrasings to be honoured.
 - **Why.** D-028's "over-honour opt-outs" holds when a message is ambiguous. "The schedule for Thursday" isn't ambiguous: it's about an appointment. Over-honouring it cost a customer their cancellation and every later reply.
 - **Revisit if.** A real opt-out phrased with another noun ("take me off your system") slips through. Add the noun, not a broader pattern.
+
+## D-046 · A booking can't be made with placeholder details, and a repeat applies corrections
+*2026-11-23 · Phase 4 · Accepted · Refines D-006's idempotency*
+
+- **Context.** In the first Phase 4 run (`amb-025`, `amb-026`), the model "penciled in" a window before the customer had given details. It called `create_booking` with the address "Pending" (or "Pendiente") and a guessed ZIP. When the real details arrived, its second call matched the same customer, service, and window, and idempotency (D-006) returned the existing booking unchanged. The database kept the placeholder address while the customer was told the right one.
+- **Decision.**
+  - `create_booking` rejects placeholder values in `customer_name` and `address` ("pending", "TBD", "unknown", "customer", and the like), and any address without a house number. The validation message tells the model to ask the customer and not book until it has the real value. It comes back as an `invalid_arguments` tool result, so the model recovers in the same turn.
+  - A repeated `create_booking` for an existing booking compares the details. If the address, ZIP, or problem description differ, they are applied, and the result says `already_booked_details_updated`. The ZIP is checked against the service area first, so a correction can't move a booking out of the area. A plain retry still changes nothing.
+- **Rejected.**
+  - *A prompt line alone.* The prompt already said to book only once every detail is known. The model penciled in anyway.
+  - *Rejecting the repeat as a conflict.* There is no update tool, so the model would have no way to fix the address.
+  - *Treating a guessed ZIP as a placeholder.* A valid-looking ZIP can't be told from a real one. Rejecting the placeholder address stops the whole call, which is what prevents the guess.
+- **Why.** The booking row is what the technician drives to. It has to hold what the customer said last, never a stand-in.
+- **Revisit if.** Real addresses without a house number (rural routes, named buildings) get refused. Then loosen that one rule.
+
+## D-047 · The output guard rejects a promise that the owner will follow up when nothing was escalated
+*2026-11-23 · Phase 4 · Accepted · Extends D-016*
+
+- **Context.** Twice in two runs (`la-001` in the baseline, `la-013` after), the model told a customer "I'll have Dana reach out" about an estimate without calling `escalate_to_owner`. The owner is never told, and the customer waits for a call that never comes. One run fixing it was luck, so a prompt line wasn't enough.
+- **Decision.**
+  - The guard spots replies that promise the owner will follow up: "<owner> will…", "<owner>'ll…", "I'll have <owner> call…", "passed this to <owner>". It uses the business's actual owner name, so "the technician will text you" doesn't count.
+  - Only when such a promise appears, the loop checks whether anything has been escalated in this conversation, in any turn. If nothing has, the reply is rejected with feedback telling the model to call `escalate_to_owner` first or drop the promise. The usual rule applies: one rewrite, then the fallback.
+  - An earlier escalation backs a later promise ("Dana will follow up about pricing" after a price question).
+- **Rejected.**
+  - *Escalating automatically when the reply promises a follow-up.* The guard would be guessing the reason; the model should choose it.
+  - *Checking every reply against the database.* Only replies that make the promise need the query.
+- **Why.** A promise of a callback is a commitment the owner has to keep. It may only be made when the owner has actually been told.
+- **Revisit if.** Legitimate replies get rewritten. For example, a promise made just after a handoff template, or one about something already escalated in an earlier conversation.

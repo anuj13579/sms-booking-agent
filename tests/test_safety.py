@@ -75,8 +75,57 @@ MUST_NOT_DETECT = [
 KNOWN_FALSE_POSITIVES = [
     ("smelled burning last month, electrician fixed it", Hazard.ELECTRICAL),
     ("can you install a CO detector?", Hazard.CO),
-    ("no gas smell anymore, thanks", Hazard.GAS),  # no negation handling, by design
+    # "anymore" may mean it smelled of gas until just now, so this negation still fires (D-043).
+    ("no gas smell anymore, thanks", Hazard.GAS),
 ]
+
+# D-043: a plain "there's no gas smell" is not a gas report. These came up in the eval baseline
+# (nb-048: "no gas smell either, just a small puddle" handed a routine booking to the owner).
+NO_GAS = [
+    "no gas smell",
+    "no gas smell either, just a small puddle",
+    "not smelling any gas, just water on the floor",
+    "I don't smell gas",
+    "I do not smell any gas",
+    "there's no smell of gas",
+    "doesn't smell like gas",
+    "no sign of a gas leak",
+    "it's not a gas leak, the tank is leaking water",
+    "no gas leak, the pilot just won't stay lit",
+]
+
+# ...but a negation never hides a real cue, and doubt counts as a cue.
+STILL_GAS = [
+    "no gas smell earlier but now I smell gas",
+    "No, I smell gas",
+    "no I smell gas",
+    "not sure if it smells like gas",
+    "I can't tell if that's a gas smell",
+    "I've never smelled gas like this before",
+    "doesn't smell like gas anymore but it did an hour ago",
+    "no smell of gas until I turned the stove on",
+    "I didn't smell gas at first but now it's strong and I smell gas",
+    "I don't know, it smells like gas",
+    # cues added with D-043
+    "it smells gassy in here",
+    "gas is escaping from the stove",
+    "there's gas coming out of the pipe",
+    "smells like mercaptan",
+]
+
+
+@pytest.mark.parametrize("text", NO_GAS)
+def test_a_plain_no_gas_smell_is_not_a_gas_report(text: str) -> None:
+    assert Hazard.GAS not in detect_hazards(text)
+
+
+@pytest.mark.parametrize("text", STILL_GAS)
+def test_negation_never_hides_a_real_gas_cue(text: str) -> None:
+    assert Hazard.GAS in detect_hazards(text)
+
+
+def test_gas_negation_does_not_hide_other_hazards() -> None:
+    assert detect_hazards("my CO alarm went off and there's no gas smell") == [Hazard.CO]
 
 
 @pytest.mark.parametrize(("text", "hazard"), MUST_DETECT)

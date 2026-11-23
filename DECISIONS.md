@@ -46,7 +46,7 @@ Each entry has the following fields:
 - **Revisit if.** The owner needs per-business safety wording. That would stay templated, just configurable.
 
 ## D-004 · Tune the emergency pre-filter for recall; word templates conditionally
-*2026-09-26 · Phase 0 · Accepted*
+*2026-09-26 · Phase 0 · Accepted · Gas negations refined by D-043*
 
 - **Context.** A false positive costs one extra text and an owner ping. A false negative can cost a life.
 - **Decision.** Patterns are deliberately broad. Templates are phrased conditionally ("*If* you smell gas, leave now…"), so a false positive still reads as sensible advice. The false-positive rate is measured on a dedicated "emergency look-alike" eval category.
@@ -327,7 +327,7 @@ Each entry has the following fields:
 - **Revisit if.** The business needs non-English replies. Then budget for UCS-2 rather than mangling text.
 
 ## D-028 · Keyword details: over-honour opt-outs, but a "yes" is not a resubscribe
-*2026-09-29 · Phase 1 · Accepted · Details D-020*
+*2026-09-29 · Phase 1 · Accepted · Details D-020 · "Take me off" narrowed by D-045*
 
 - **Context.** D-020 fixed the keyword list. Implementing it raised four questions. Twilio's Advanced Opt-Out docs (checked 2026-09-29) confirm the eight opt-out keywords, list `START`, `UNSTOP`, and `YES` as opt-in and `HELP` and `INFO` as help, and mark only STOP, START/UNSTOP, and HELP as non-removable.
 - **Decision.**
@@ -585,3 +585,43 @@ Each entry has the following fields:
 - **Why.** Overfitting to the test split and overspending are both prevented in code rather than by remembering to be careful.
 - **Revisit if.** The estimate is far from real spend. The first two 16-scenario runs (2026-11-22) spent about $0.0005 a conversation all-in, twenty times under it, but over short conversations (2.4 customer messages on average). A full dev run will show whether that holds before the estimate changes.
 
+## D-043 · Gas: a plain "no gas smell" is not a gas report; the model gets real-leak cues
+*2026-11-23 · Phase 4 · Accepted · Refines D-004 for gas only · Owner decision*
+
+- **Context.** In the dev baseline (`nb-048`), a customer with a small water-heater leak wrote "no gas smell either, just a small puddle". The pre-filter has no negation handling (D-004), so it sent the gas safety message and handed a routine booking to the owner. The owner's rule: any gas smell can be an emergency and must stay one, but the system should tell a real gas-leak context from a mention that rules one out.
+- **Decision.**
+  - Before the gas patterns run, the pre-filter removes a few exact negation shapes: "no gas smell/odor/leak", "no smell/sign of gas", "don't/doesn't/can't/not smell(ing) (any/like) gas", and "not a gas leak". Everything else in the message is still checked, so "no gas smell earlier but now I smell gas" fires.
+  - What is deliberately not a negation: "never" ("never smelled gas like this" is a leak), and a negated phrase followed by "anymore", "now", "until", "before", "earlier", or "yet" ("doesn't smell like gas anymore" may mean it did a minute ago). Doubt counts as a cue: "not sure if it smells like gas" fires.
+  - Only gas changes. Every other hazard keeps D-004's no-negation rule.
+  - New recall patterns for gas: "gassy", gas "escaping / seeping / coming out", and "mercaptan".
+  - The prompt (`system_v2`) tells the model what a real leak looks like: a smell of gas, rotten eggs, sulfur, or skunk; hissing from a gas line, meter, or appliance; a burner that won't shut off; people dizzy near a gas appliance. Even an unsure customer is an emergency. It also lists routine gas-equipment jobs that are not: installs, a clicking igniter, a pilot that won't stay lit with no smell, water leaking from a gas water heater. And if the customer says there is no gas smell, believe them.
+  - The scenario category tests still hold: every clear emergency trips the pre-filter, and no subtle one does.
+- **Rejected.**
+  - *General negation handling for every hazard.* Recall is the point of the pre-filter. Gas is where the eval showed a real cost, and its negations are formulaic enough to match exactly.
+  - *Keeping "no gas smell" as an emergency.* A customer answering "do you smell gas?" with "no" would be handed to the owner every time, and the booking lost.
+  - *Letting the model decide negations.* The pre-filter runs before the model on purpose (D-003); a model miss there would be a missed leak.
+- **Why.** A missed leak is the worst failure this product has, so the narrowing removes only sentences whose whole meaning is "there is no gas smell", and keeps every phrasing with doubt or a time qualifier.
+- **Revisit if.** A real report is missed because of a negation shape, or look-alike runs show other negated hazards ("no sparks", "no smoke") handing routine jobs to the owner.
+
+## D-044 · Work the business doesn't do gets a polite no, without paging the owner
+*2026-11-23 · Phase 4 · Accepted · Narrows out_of_scope in D-011 · Owner decision*
+
+- **Context.** The Phase 2 prompt sent every request for work the business doesn't do (appliances, roofing, pests, cars) to the owner as `out_of_scope`, a handoff. In the baseline the model often declined politely instead (`ot-007`, `ot-017`), and those scenarios failed. The owner decided that the model's behaviour is right: a car AC question shouldn't page anyone.
+- **Decision.**
+  - Requests for work the business doesn't do at all (cars, appliances like washers or dishwashers, roofing, pest control, painting, pool heaters) get one or two kind sentences: we only do home HVAC, plumbing, and electrical, and an offer to help with that. No escalation, and no "Dana will follow up".
+  - `out_of_scope` stays for commercial or large projects in our trades that can't be booked as a single home visit (wiring a restaurant). Those are leads the owner wants.
+  - The off-topic scenarios now expect no escalation for unrelated work, and they fail if any reply says "Dana will", "Dana can", "Dana'll", or "Dana here". That catches both an unbacked promise of follow-up (the `la-001` failure) and the model speaking as the owner (`ot-007`).
+- **Rejected.**
+  - *Escalating everything out of scope.* It drowns the owner in pages about jobs they will never take.
+  - *A new escalation reason for "declined".* Nothing for the owner to do, so nothing to record.
+- **Why.** Escalations should mean the owner has something to act on.
+- **Revisit if.** Customers turned away this way turn out to be people the owner would have wanted to hear from, for example a related job they could have quoted.
+
+## D-045 · "Take me off / remove me from" opts out only when it names a list or the texts
+*2026-11-23 · Phase 4 · Accepted · Refines D-020 and D-028*
+
+- **Context.** In the baseline (`cx-016`), "Can you take me off the schedule for Thursday?" matched the natural-language opt-out pattern `(remove|take) me (off|from)`. The customer was unsubscribed, the booking they wanted cancelled was left in place, and their follow-up got no answer. It was the most serious failure in the run.
+- **Decision.** The phrase opts out only when what follows, within two words, is a list or the texts: `list`, `texts`, `messages`, `texting`, `sms`, `contacts`, or `number` ("take me off your list", "remove me from your texting list"). "Take me off the schedule" or "the calendar" goes to the agent as a cancellation. Every other opt-out pattern is unchanged.
+- **Rejected.** *Dropping the phrase entirely.* "Take me off your list" is one of the most common ways people opt out, and consent rules expect reasonable phrasings to be honoured.
+- **Why.** D-028's "over-honour opt-outs" holds when a message is ambiguous. "The schedule for Thursday" isn't ambiguous: it's about an appointment. Over-honouring it cost a customer their cancellation and every later reply.
+- **Revisit if.** A real opt-out phrased with another noun ("take me off your system") slips through. Add the noun, not a broader pattern.

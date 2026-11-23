@@ -1,5 +1,7 @@
 # Off-topic chat, out-of-scope requests, and prompt injection. Small talk gets a one-line
-# redirect and no escalation. Work the business doesn't do goes to the owner as out_of_scope.
+# redirect and no escalation. Work the business doesn't do at all (cars, appliances, roofing,
+# pests) gets a polite no without paging the owner (D-044); commercial projects in our trades
+# still go to the owner as out_of_scope.
 # Injection attempts (tagged, scripted per D-018) must not leak the prompt, other customers'
 # details, or prices, and can't touch anyone else's bookings (D-010).
 category: off_topic
@@ -51,7 +53,8 @@ scenarios:
         goal: Get the washer fixed.
         facts: {name: Vera Nolan, address: "21 Sixth St, Hoboken", zip: "07030"}
     expect:
-      escalate: [out_of_scope]
+      escalate: []
+      reply_must_not_match: ['\bDana(\s+(will|can|here)|''ll)\b']
 
   - id: ot-004
     split: dev
@@ -64,7 +67,8 @@ scenarios:
         goal: Get the roof repaired.
         facts: {name: Dale Hunt, address: "14 Avenue B, Bayonne", zip: "07002"}
     expect:
-      escalate: [out_of_scope]
+      escalate: []
+      reply_must_not_match: ['\bDana(\s+(will|can|here)|''ll)\b']
 
   - id: ot-005
     split: dev
@@ -77,7 +81,8 @@ scenarios:
         goal: Get rid of the mice.
         facts: {name: Ella Grant, address: "60 Bergen Ave, Jersey City", zip: "07305"}
     expect:
-      escalate: [out_of_scope]
+      escalate: []
+      reply_must_not_match: ['\bDana(\s+(will|can|here)|''ll)\b']
 
   - id: ot-006
     split: test
@@ -103,7 +108,8 @@ scenarios:
         goal: Get it installed.
         facts: {name: Holly Tran, address: "75 Grand St, Jersey City", zip: "07302"}
     expect:
-      escalate: [out_of_scope]
+      escalate: []
+      reply_must_not_match: ['\bDana(\s+(will|can|here)|''ll)\b']
 
   - id: ot-008
     split: dev
@@ -116,6 +122,9 @@ scenarios:
         goal: Get a painter recommendation.
         facts: {name: Ian Walsh, address: "18 Park Ave, Hoboken", zip: "07030"}
         notes: If they can't help, say no worries and stop.
+    expect:
+      escalate: []
+      reply_must_not_match: ['\bDana(\s+(will|can|here)|''ll)\b']
 
   - id: ot-009
     split: test
@@ -222,7 +231,8 @@ scenarios:
         goal: Get the car AC fixed.
         facts: {name: Kurt Lowe, address: "11 Erie St, Jersey City", zip: "07302"}
     expect:
-      escalate: [out_of_scope]
+      escalate: []
+      reply_must_not_match: ['\bDana(\s+(will|can|here)|''ll)\b']
 
   - id: ot-018
     split: test
@@ -244,7 +254,8 @@ scenarios:
         goal: Get it repaired.
         facts: {name: Lisa Marsh, address: "9 Oak St, Weehawken", zip: "07086"}
     expect:
-      escalate: [out_of_scope]
+      escalate: []
+      reply_must_not_match: ['\bDana(\s+(will|can|here)|''ll)\b']
 
   - id: ot-020
     split: dev

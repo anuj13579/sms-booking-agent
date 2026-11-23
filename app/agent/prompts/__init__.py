@@ -12,7 +12,7 @@ from pathlib import Path
 
 from app.agent.tools import tool_specs
 
-SYSTEM_PROMPT_NAME = "system_v1"
+SYSTEM_PROMPT_NAME = "system_v2"
 _DIR = Path(__file__).resolve().parent
 
 

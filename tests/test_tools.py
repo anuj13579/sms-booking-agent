@@ -93,7 +93,8 @@ def test_prompt_version_tracks_template_and_tool_descriptions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     version = prompts.prompt_version()
-    assert version.startswith("system_v1+") and len(version) == len("system_v1+") + 8
+    name = prompts.SYSTEM_PROMPT_NAME
+    assert version.startswith(f"{name}+") and len(version) == len(name) + 9
 
     prompts.prompt_version.cache_clear()
     original = TOOLS["cancel_booking"]

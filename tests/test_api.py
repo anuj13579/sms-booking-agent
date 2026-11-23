@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.loop import Agent, AgentConfig
+from app.agent.prompts import SYSTEM_PROMPT_NAME
 from app.agent.providers.fake import FakeProvider, reply, tool
 from app.config import Settings
 from app.db.models import Message
@@ -65,7 +66,7 @@ async def test_page_and_info(sim: Sim) -> None:
     info = (await sim.client.get("/api/sim/info")).json()
     assert info["business"] == "Brightwater Test Co"
     assert info["model"] == "deepseek-flash"
-    assert info["prompt_version"].startswith("system_v1+")
+    assert info["prompt_version"].startswith(f"{SYSTEM_PROMPT_NAME}+")
     assert info["api_key_configured"] is True
     assert (await sim.client.get("/healthz")).json() == {"ok": True}
 

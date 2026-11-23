@@ -3,6 +3,7 @@
     uv run python -m app.seed
 
 Idempotent: if a business with this SMS number already exists, nothing is written.
+``create_brightwater`` makes another copy under a different number (used by the eval harness).
 """
 
 import asyncio
@@ -62,11 +63,16 @@ async def seed_brightwater(session: AsyncSession) -> Business:
     existing = await session.scalar(select(Business).where(Business.sms_number == SMS_NUMBER))
     if existing is not None:
         return existing
+    return await create_brightwater(session, SMS_NUMBER)
 
+
+async def create_brightwater(session: AsyncSession, sms_number: str) -> Business:
+    """A fresh copy of Brightwater under its own number. The eval harness makes one per scenario
+    run, so runs can't see each other's customers or bookings and can run concurrently."""
     business = Business(
         name="Brightwater Home Services",
         timezone="America/New_York",
-        sms_number=SMS_NUMBER,
+        sms_number=sms_number,
         owner_name="Dana",
         owner_phone="+15555550101",
         min_lead_minutes=120,

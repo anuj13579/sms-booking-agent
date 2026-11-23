@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, timedelta
 
 import pytest
@@ -123,6 +124,48 @@ class TestCreate:
         assert (first.outcome, again.outcome) == ("created", "existing")
         assert again.booking.id == first.booking.id
         assert await booking_count(session) == 1
+
+    async def test_a_repeat_with_corrected_details_applies_them(
+        self, session: AsyncSession, world: World, clock: FixedClock
+    ) -> None:
+        """Returning the old row left a booking at the wrong address while the customer was told
+        the right one (eval scenarios amb-025, amb-026)."""
+        pat = world.customers["pat"]
+        first = ok(
+            await create_booking(
+                session, world.business, pat, new_booking(local(TUESDAY, 10)), clock
+            )
+        )
+        corrected = replace(
+            new_booking(local(TUESDAY, 10)),
+            address="21 River St, Hoboken NJ",
+            zip="07302",
+            problem_description="AC blowing warm air, unit in the attic",
+        )
+        again = ok(await create_booking(session, world.business, pat, corrected, clock))
+
+        assert again.outcome == "updated"
+        assert again.booking.id == first.booking.id
+        assert (again.booking.address, again.booking.zip) == ("21 River St, Hoboken NJ", "07302")
+        assert again.booking.problem_description == "AC blowing warm air, unit in the attic"
+        assert (pat.address, pat.zip) == ("21 River St, Hoboken NJ", "07302")
+        assert await booking_count(session) == 1
+
+    async def test_a_corrected_zip_outside_the_area_is_refused_not_applied(
+        self, session: AsyncSession, world: World, clock: FixedClock
+    ) -> None:
+        pat = world.customers["pat"]
+        ok(
+            await create_booking(
+                session, world.business, pat, new_booking(local(TUESDAY, 10)), clock
+            )
+        )
+        outside = replace(new_booking(local(TUESDAY, 10)), zip="10001")
+        result = await create_booking(session, world.business, pat, outside, clock)
+        assert isinstance(result, BookingErr)
+        assert result.code is BookingErrorCode.OUTSIDE_SERVICE_AREA
+        booking = await session.scalar(select(Booking))
+        assert booking is not None and booking.zip == "07030"
 
     async def test_full_window_returns_alternatives(
         self, session: AsyncSession, world: World, clock: FixedClock

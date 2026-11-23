@@ -95,7 +95,13 @@ class BookingView:
 
 
 BookingOutcome = Literal[
-    "created", "existing", "rescheduled", "unchanged", "cancelled", "already_cancelled"
+    "created",
+    "existing",
+    "updated",  # a repeat of an existing booking with corrected details: the details were applied
+    "rescheduled",
+    "unchanged",
+    "cancelled",
+    "already_cancelled",
 ]
 
 
@@ -271,6 +277,36 @@ async def _find_same(
     )
 
 
+async def _repeat(
+    session: AsyncSession,
+    booking: Booking,
+    customer: Customer,
+    request: NewBooking,
+    zip5: str,
+    service: ServiceType,
+    cal: BusinessCalendar,
+) -> BookingResult:
+    """A second create_booking for a booking that already exists (same customer, service, and
+    window). A plain retry changes nothing. A repeat with corrected details (a fixed address or
+    ZIP) applies them: the caller's latest word is what the technician should get. Returning the
+    old row unchanged once left a booking with a placeholder address while the customer was told
+    the right one (eval scenarios amb-025, amb-026)."""
+    address = request.address.strip()
+    problem = request.problem_description.strip()
+    changed = (booking.address, booking.zip, booking.problem_description) != (
+        address,
+        zip5,
+        problem,
+    )
+    if changed:
+        booking.address, booking.zip, booking.problem_description = address, zip5, problem
+    customer.name = request.customer_name.strip() or customer.name
+    customer.address = address or customer.address
+    customer.zip = zip5
+    await session.flush()
+    return BookingOk("updated" if changed else "existing", _view(booking, service, cal))
+
+
 async def _get_customer_booking(
     session: AsyncSession, business: Business, customer: Customer, ref: str
 ) -> Booking | None:
@@ -412,7 +448,7 @@ async def create_booking(
 
     existing = await _find_same(session, customer.id, service.id, slot.start)
     if existing is not None:
-        return BookingOk("existing", _view(existing, service, cal))
+        return await _repeat(session, existing, customer, request, zip5, service, cal)
 
     candidates = await _technicians_by_preference(session, cal, service.trade, slot)
     for technician_id in candidates:
@@ -444,7 +480,7 @@ async def create_booking(
             # A concurrent duplicate of this exact request committed first.
             same = await _find_same(session, customer.id, service.id, slot.start)
             assert same is not None
-            return BookingOk("existing", _view(same, service, cal))
+            return await _repeat(session, same, customer, request, zip5, service, cal)
         if conflict is not None:
             continue  # lost the race for this technician; try the next one
         assert isinstance(booking_id, uuid.UUID)

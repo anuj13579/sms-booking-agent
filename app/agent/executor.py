@@ -160,6 +160,7 @@ _INVALID_SLOT = {
 _OUTCOME_STATUS = {
     "created": "booked",
     "existing": "already_booked",
+    "updated": "already_booked_details_updated",
     "rescheduled": "rescheduled",
     "unchanged": "unchanged",
     "cancelled": "cancelled",

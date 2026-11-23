@@ -9,6 +9,9 @@ revoking consent to be honoured.
   someone who asked us to stop is the worse error.
 * "CANCEL" alone is an opt-out, exactly as the carrier treats it. "Cancel my appointment" is not;
   it goes to the agent. Our confirmations invite that longer phrasing.
+* "Take me off / remove me from" counts only when what they leave is a list or the texts
+  ("take me off your list"). "Take me off the schedule for Thursday" is a cancellation; the eval
+  baseline caught the broader pattern unsubscribing that customer (scenario cx-016).
 * Opt-in keywords only mean something to an opted-out customer. A subscribed customer answering
   "Yes" to "Does Tuesday 10-12 work?" is confirming a booking, not resubscribing.
 """
@@ -38,7 +41,8 @@ _NATURAL_OPT_OUT = re.compile(
     | \b(?:don'?t|do\s+not|dont)\s+(?:text|txt|message|contact)\s+(?:me|this\s+number)\b
     | \bunsubscribe\b
     | \bopt\s*-?\s*out\b
-    | \b(?:remove|take)\s+me\s+(?:off|from)\b
+    | \b(?:remove|take)\s+me\s+(?:off|from)\s+(?:of\s+)?(?:\w+\s+){0,2}?
+      (?:list|lists|texts?|txts?|messages?|messaging|texting|sms|contacts?|number)\b
     | \bno\s+more\s+(?:texts|messages|txts)\b
     | ^\s*stop\s+all\W*$
     """,

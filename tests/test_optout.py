@@ -60,6 +60,10 @@ def test_single_word_opt_out(body: str) -> None:
         "unsubscribe me please",
         "take me off your list",
         "remove me from this list",
+        "Remove me from your texting list",
+        "take me off ur list pls",
+        "please remove me from your texts",
+        "take me off of your contact list",
         "no more texts",
         "opt out",
         "stop sending me messages",
@@ -84,6 +88,10 @@ def test_natural_opt_out(body: str) -> None:
         "stopcock is stuck",
         "Help me pick a time",
         "yes please",
+        # A cancellation, not an opt-out (eval baseline, scenario cx-016).
+        "Can you take me off the schedule for Thursday?",
+        "please remove me from tomorrow's appointments",
+        "take me off the calendar, I fixed it",
     ],
 )
 def test_not_a_keyword(body: str) -> None:

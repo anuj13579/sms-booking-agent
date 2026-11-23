@@ -1,0 +1,89 @@
+# STOP, HELP, and START (D-020, D-028). All handled before the LLM; scripted customers. After an
+# opt-out, nothing but the opt-in confirmation may be sent (the universal silent_after_opt_out
+# check), even when the customer keeps texting.
+category: opt_out
+defaults:
+  clock: 2026-10-06T09:15
+  customer: {kind: scripted}
+  expect:
+    escalate: []
+    bookings: {new: 0}
+
+scenarios:
+  - id: oo-001
+    split: dev
+    title: STOP, then texts again
+    customer: {messages: ["STOP", "hello?"]}
+    expect: {opted_out: true}
+
+  - id: oo-002
+    split: dev
+    title: '"stop texting me"'
+    customer: {messages: ["stop texting me"]}
+    expect: {opted_out: true}
+
+  - id: oo-003
+    split: test
+    title: HELP
+    customer: {messages: ["HELP"]}
+    expect:
+      opted_out: false
+      reply_must_match: ["Reply STOP"]
+
+  - id: oo-004
+    split: dev
+    title: STOP, START, then a real request
+    customer:
+      messages:
+        - "STOP"
+        - "START"
+        - "My kitchen sink is clogged, can someone come Thursday?"
+    expect:
+      opted_out: false
+      reply_must_match: ["resubscribed"]
+
+  - id: oo-005
+    split: dev
+    title: Unsubscribe
+    customer: {messages: ["Unsubscribe"]}
+    expect: {opted_out: true}
+
+  - id: oo-006
+    split: test
+    title: Already opted out, asks for a plumber; no reply
+    fixture:
+      customer: {name: Rae Holt, address: "4 Hudson Pl, Hoboken", zip: "07030", opted_out: true}
+    customer: {messages: ["Hi, I need a plumber for a leaky faucet"]}
+    expect: {opted_out: true}
+
+  - id: oo-007
+    split: dev
+    title: STOP in the middle of a conversation
+    customer:
+      messages:
+        - "Need my AC looked at"
+        - "STOP"
+        - "hello? anyone?"
+    expect: {opted_out: true}
+
+  - id: oo-008
+    split: dev
+    title: INFO
+    customer: {messages: ["Info"]}
+    expect:
+      opted_out: false
+      reply_must_match: ["Reply STOP"]
+
+  - id: oo-009
+    split: test
+    title: '"Quit."'
+    customer: {messages: ["Quit."]}
+    expect: {opted_out: true}
+
+  - id: oo-010
+    split: dev
+    title: '"Yes" from a subscribed customer is not an opt-in'
+    customer: {messages: ["Yes"]}
+    expect:
+      opted_out: false
+      reply_must_not_match: ["resubscribed"]

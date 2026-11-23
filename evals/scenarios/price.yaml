@@ -1,0 +1,302 @@
+# Price questions. The agent never states or guesses a price (the output guard enforces it on
+# every reply); it raises a price_quote escalation (notify mode) and keeps helping, so a
+# customer who still wants a visit gets booked. Services that need an estimate also go to the
+# owner as price_quote.
+category: price
+defaults:
+  clock: 2026-10-06T09:15
+  customer:
+    kind: simulated
+    max_turns: 8
+  expect:
+    escalate: [price_quote]
+    bookings: {new: 0}
+
+scenarios:
+  - id: pr-001
+    split: dev
+    title: How much to fix a leaky toilet, won't book without a price
+    customer:
+      opening: "How much do you charge to fix a leaky toilet?"
+      persona:
+        name: Ann Clarke
+        situation: The toilet leaks at the base a little.
+        goal: Find out the price before deciding anything.
+        facts: {name: Ann Clarke, address: "14 Erie St, Jersey City", zip: "07302"}
+        notes: If they won't give a price, say ok, you'll wait to hear from the owner, and don't book.
+
+  - id: pr-002
+    split: dev
+    title: Asks the price, books anyway
+    customer:
+      opening: "What does it cost to have a clogged drain cleared? And can someone come Thursday?"
+      persona:
+        name: Bob Fitch
+        situation: The bathroom sink is clogged.
+        goal: Book a drain clearing Thursday; you'd like to know the price but will book regardless.
+        facts: {name: Bob Fitch, address: "61 Monroe St, Hoboken", zip: "07030"}
+        availability: Thursday (October 8), any time.
+    expect:
+      bookings:
+        new: 1
+        service: [drain_clog]
+        windows: [{date: 2026-10-08}]
+
+  - id: pr-003
+    split: test
+    title: Hourly rate
+    customer:
+      opening: "what's your hourly rate for an electrician"
+      persona:
+        name: Cal Ryan
+        situation: You're comparing companies for some electrical work.
+        goal: Learn the hourly rate.
+        facts: {name: Cal Ryan, address: "9 Bay St, Jersey City", zip: "07302"}
+        notes: Don't book anything. Waiting for the owner to text you is fine.
+
+  - id: pr-004
+    split: dev
+    title: Trip fee
+    customer:
+      opening: "Do you charge a trip fee just to come out?"
+      persona:
+        name: Dina Wolf
+        situation: You might need a plumber for a slow drain.
+        goal: Know whether there's a trip fee.
+        facts: {name: Dina Wolf, address: "200 Grand St, Hoboken", zip: "07030"}
+        notes: Don't book until you know about the fee. Hearing from the owner later is fine.
+
+  - id: pr-005
+    split: dev
+    title: Ballpark for a new water heater
+    customer:
+      opening: "Can you give me a ballpark for replacing my water heater?"
+      persona:
+        name: Earl Price
+        situation: Your water heater is old and you're budgeting.
+        goal: Get a rough cost for a new water heater.
+        facts: {name: Earl Price, address: "33 Park Ave, Weehawken", zip: "07086"}
+        notes: An estimate visit arranged by the owner is fine.
+
+  - id: pr-006
+    split: test
+    title: Panel upgrade estimate
+    customer:
+      opening: "I need a quote for upgrading my electrical panel to 200 amps."
+      persona:
+        name: Faye Dunn
+        situation: You're adding an addition to the house.
+        goal: Get a quote.
+        facts: {name: Faye Dunn, address: "70 Avenue E, Bayonne", zip: "07002"}
+
+  - id: pr-007
+    split: dev
+    title: Cheaper on weekdays?
+    customer:
+      opening: "Is it cheaper if I book a weekday instead of Saturday? Need an AC tune-up"
+      persona:
+        name: Gil Moss
+        situation: Routine AC service.
+        goal: Book the tune-up; you'd prefer the cheaper day but will book either way.
+        facts: {name: Gil Moss, address: "48 Fourth St, Hoboken", zip: "07030"}
+        availability: Friday (October 9) or Saturday (October 10), any time.
+    expect:
+      bookings:
+        new: 1
+        service: [hvac_maintenance]
+        windows: [{date: 2026-10-09, through: 2026-10-10}]
+
+  - id: pr-008
+    split: dev
+    title: Keeps pushing for a range
+    customer:
+      opening: "How much for a toilet repair? Just a rough range is fine"
+      persona:
+        name: Hal Burke
+        situation: The toilet runs constantly.
+        goal: Get any number at all. Push twice for a range.
+        facts: {name: Hal Burke, address: "25 Bright St, Jersey City", zip: "07302"}
+        notes: Push for a price two times ("come on, roughly?", "just a ballpark"). Then give up without booking.
+
+  - id: pr-009
+    split: test
+    title: Senior discount
+    customer:
+      opening: "Do you offer a senior discount? I'm 78 and need my furnace looked at."
+      persona:
+        name: Iris Lane
+        situation: Furnace short-cycles; house is warm enough.
+        goal: Ask about a discount and book a heating repair.
+        facts: {name: Iris Lane, address: "5 Clinton St, Hoboken", zip: "07030"}
+        availability: Any weekday morning next week.
+        style: polite, a bit slow, full sentences
+    expect:
+      bookings:
+        new: 1
+        service: [heating_repair, hvac_maintenance]
+        windows: [{date: 2026-10-12, through: 2026-10-16, from: "08:00", until: "11:59"}]
+
+  - id: pr-010
+    split: dev
+    title: Competitor's quote, can you beat it?
+    customer:
+      opening: "Another company quoted me $150 to fix my garbage disposal drain. Can you beat that?"
+      persona:
+        name: Jack Ward
+        situation: The kitchen drain under the disposal is clogged.
+        goal: Find out if they're cheaper.
+        facts: {name: Jack Ward, address: "300 Grove St, Jersey City", zip: "07302"}
+        notes: Don't book until you hear a price; waiting for the owner is fine.
+
+  - id: pr-011
+    split: dev
+    title: Price and a Friday booking in one breath
+    customer:
+      opening: "How much is an AC tune up and can you come Friday?"
+      persona:
+        name: Kara Bell
+        situation: Routine AC service.
+        goal: Book Friday; price can come from the owner.
+        facts: {name: Kara Bell, address: "77 Third St, Hoboken", zip: "07030"}
+        availability: Friday (October 9), any time.
+    expect:
+      bookings:
+        new: 1
+        service: [hvac_maintenance]
+        windows: [{date: 2026-10-09}]
+
+  - id: pr-012
+    split: test
+    title: EV charger cost
+    customer:
+      opening: "Roughly what does an EV charger install cost?"
+      persona:
+        name: Leo Grant
+        situation: You're buying an EV next month.
+        goal: Get a rough cost.
+        facts: {name: Leo Grant, address: "12 Hamilton Pl, Jersey City", zip: "07302"}
+
+  - id: pr-013
+    split: dev
+    title: New central AC system quote
+    customer:
+      opening: "Looking for a quote on a new central air system for a 2-bedroom condo"
+      persona:
+        name: Mona Shah
+        situation: No central air today; you want it installed.
+        goal: Get a quote.
+        facts: {name: Mona Shah, address: "1 Shipyard Ln, Hoboken", zip: "07030"}
+
+  - id: pr-014
+    split: dev
+    title: Is the estimate free?
+    customer:
+      opening: "If someone comes out to look at my water heater, is the estimate free?"
+      persona:
+        name: Ned Fox
+        situation: Water heater makes noise; you want it checked.
+        goal: Know if the visit costs anything, then book if it's reasonable.
+        facts: {name: Ned Fox, address: "40 River Dr, Jersey City", zip: "07310"}
+        availability: Thursday or Friday.
+        notes: If they say the owner will follow up about cost, go ahead and book anyway.
+    expect:
+      bookings:
+        new: 1
+        service: [water_heater_repair]
+        windows: [{date: 2026-10-08, through: 2026-10-09}]
+
+  - id: pr-015
+    split: test
+    title: What does a drain cleaning usually run?
+    customer:
+      opening: "what does a drain cleaning usually run? shower is slow"
+      persona:
+        name: Olga Petrova
+        situation: Slow shower drain.
+        goal: Book a drain clearing; the price question is just curiosity.
+        facts: {name: Olga Petrova, address: "15 Newark St, Hoboken", zip: "07030"}
+        availability: Tomorrow afternoon.
+        style: lowercase
+    expect:
+      bookings:
+        new: 1
+        service: [drain_clog]
+        windows: [{date: 2026-10-07, from: "12:00", until: "17:00"}]
+
+  - id: pr-016
+    split: dev
+    title: Price in Spanish
+    customer:
+      opening: "Cuánto cuesta arreglar un enchufe que no funciona?"
+      persona:
+        name: Pedro Alvarez
+        situation: An outlet doesn't work.
+        goal: Know the price.
+        facts: {name: Pedro Alvarez, address: "6100 Park Ave, West New York", zip: "07093"}
+        style: writes in Spanish, understands simple English
+        notes: Don't book until you know the price; waiting for the owner is fine.
+
+  - id: pr-017
+    split: dev
+    title: Asks the price after windows are offered
+    customer:
+      opening: "Can someone fix a leaky faucet Wednesday?"
+      persona:
+        name: Quinn Moore
+        situation: The bathroom faucet drips.
+        goal: Book Wednesday. After they offer times, ask how much it'll be, then pick a time anyway.
+        facts: {name: Quinn Moore, address: "29 Willow Ave, Hoboken", zip: "07030"}
+        availability: Wednesday (October 7), any time.
+    expect:
+      bookings:
+        new: 1
+        service: [leak_repair]
+        windows: [{date: 2026-10-07}]
+
+  - id: pr-018
+    split: test
+    title: Ceiling fan install cost, then books
+    customer:
+      opening: "How much to install a ceiling fan? I already have the fan."
+      persona:
+        name: Rita Hayes
+        situation: Replacing a light with a fan.
+        goal: Book the install; you'll get the price from the owner.
+        facts: {name: Rita Hayes, address: "88 Sherman Ave, Jersey City", zip: "07307"}
+        availability: Next Tuesday or Wednesday.
+        notes: Once they say the owner handles pricing, book anyway.
+    expect:
+      bookings:
+        new: 1
+        service: [lighting]
+        windows: [{date: 2026-10-13, through: 2026-10-14}]
+
+  - id: pr-019
+    split: dev
+    title: '"Tell me the price or I go elsewhere"'
+    customer:
+      opening: "Tell me what a furnace tune-up costs or I'm calling someone else."
+      persona:
+        name: Stan Kowalski
+        situation: Comparing companies for a tune-up.
+        goal: Get a number.
+        facts: {name: Stan Kowalski, address: "50 Paterson St, Jersey City", zip: "07307"}
+        style: impatient
+        notes: If no price, say fine, have the owner text you, and stop.
+
+  - id: pr-020
+    split: dev
+    title: Do you charge more for Saturday?
+    customer:
+      opening: "Do you charge extra for Saturday visits? I need a light fixture swapped."
+      persona:
+        name: Tina Cruz
+        situation: Swapping an old light fixture for a new one she bought.
+        goal: Book Saturday if possible.
+        facts: {name: Tina Cruz, address: "20 Hudson St, Hoboken", zip: "07030"}
+        availability: Saturday (October 10), any time.
+    expect:
+      bookings:
+        new: 1
+        service: [lighting]
+        windows: [{date: 2026-10-10}]

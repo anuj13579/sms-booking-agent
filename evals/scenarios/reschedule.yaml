@@ -1,0 +1,508 @@
+# Reschedules: a returning customer with an upcoming booking wants to move it. Success is that
+# booking moved (not a new one made, not cancelled) into a window the customer accepted.
+category: reschedule
+defaults:
+  clock: 2026-10-06T09:15  # Tuesday
+  customer:
+    kind: simulated
+    max_turns: 8
+  expect:
+    escalate: []
+    bookings: {new: 0}
+
+scenarios:
+  - id: rs-001
+    split: dev
+    title: Move Thursday morning to Friday morning
+    fixture:
+      customer: {name: Pat Lee, address: "12 River St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: ac_repair, start: 2026-10-08T10:00, problem: AC blowing warm air}
+    customer:
+      opening: "Hi, I can't do Thursday anymore for the AC visit. Can we move it to Friday morning?"
+      persona:
+        name: Pat Lee
+        situation: You have an AC repair booked Thursday 10am-12pm and something came up.
+        goal: Move the visit to Friday morning.
+        facts: {name: Pat Lee, address: "12 River St, Hoboken", zip: "07030"}
+        availability: Friday (October 9) morning.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-09, from: "08:00", until: "11:59"}]}
+
+  - id: rs-002
+    split: dev
+    title: Push to next Monday afternoon
+    fixture:
+      customer: {name: Sam Ortiz, address: "88 Garden St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: drain_clog, start: 2026-10-07T13:00, problem: Kitchen sink clogged}
+    customer:
+      opening: "need to reschedule tomorrow's plumber, can we do next monday afternoon instead"
+      persona:
+        name: Sam Ortiz
+        situation: You have a plumber coming tomorrow 1-3pm for the kitchen sink.
+        goal: Move it to next Monday afternoon.
+        facts: {name: Sam Ortiz}
+        availability: Next Monday (October 12) afternoon.
+        style: lowercase, short
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-12, from: "12:00", until: "17:00"}]}
+
+  - id: rs-003
+    split: test
+    title: Two bookings, names the plumbing one
+    fixture:
+      customer: {name: Janet Moore, address: "29 Erie St, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: outlet_switch_repair, start: 2026-10-08T08:00, problem: Dead outlet}
+        - {label: b2, service: leak_repair, start: 2026-10-09T13:00, problem: Faucet drip}
+    customer:
+      opening: "Hi, can I move the plumbing appointment to next Tuesday? The electrician one is still fine."
+      persona:
+        name: Janet Moore
+        situation: You have an electrician Thursday morning and a plumber Friday afternoon.
+        goal: Move only the plumber visit to next Tuesday.
+        facts: {name: Janet Moore}
+        availability: Next Tuesday (October 13), any time.
+    expect:
+      existing:
+        b1: unchanged
+        b2: {state: rescheduled, windows: [{date: 2026-10-13}]}
+
+  - id: rs-004
+    split: dev
+    title: Two bookings, doesn't say which, answers when asked
+    fixture:
+      customer: {name: Victor Osei, address: "61 Wayne St, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: heating_repair, start: 2026-10-07T10:00, problem: Furnace banging}
+        - {label: b2, service: lighting, start: 2026-10-09T15:00, problem: New fixture install}
+    customer:
+      opening: "Need to change my appointment"
+      persona:
+        name: Victor Osei
+        situation: You have a furnace repair Wednesday morning and a light install Friday afternoon.
+        goal: Move the light install to Saturday morning.
+        facts: {name: Victor Osei}
+        availability: Saturday (October 10) morning.
+        notes: Don't say which appointment until they ask. Then say the light install.
+    expect:
+      existing:
+        b1: unchanged
+        b2: {state: rescheduled, windows: [{date: 2026-10-10}]}
+
+  - id: rs-005
+    split: dev
+    title: Move earlier, to tomorrow
+    fixture:
+      customer: {name: Linda Park, address: "77 Hudson St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: toilet_repair, start: 2026-10-12T10:00, problem: Running toilet}
+    customer:
+      opening: "Any chance you could come sooner than Monday for the toilet? Tomorrow would be great."
+      persona:
+        name: Linda Park
+        situation: You have a toilet repair next Monday morning but it's getting worse.
+        goal: Move it to tomorrow.
+        facts: {name: Linda Park}
+        availability: Tomorrow (Wednesday), any time.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-07}]}
+
+  - id: rs-006
+    split: test
+    title: Wanted window is full, takes another
+    fixture:
+      customer: {name: Omar Haddad, address: "70 Columbus Dr, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: ac_repair, start: 2026-10-07T08:00, problem: AC grinding}
+      busy:
+        - {trade: hvac, start: 2026-10-08T08:00}
+    customer:
+      opening: "Can you move my AC appointment to Thursday 8am?"
+      persona:
+        name: Omar Haddad
+        situation: You have an AC repair tomorrow 8-10am.
+        goal: Move it to Thursday.
+        facts: {name: Omar Haddad}
+        availability: Thursday (October 8). 8am is first choice, any other Thursday window is fine.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-08}]}
+
+  - id: rs-007
+    split: dev
+    title: '"The one on Thursday"'
+    fixture:
+      customer: {name: Grace Liu, address: "200 Boulevard East, Weehawken", zip: "07086"}
+      bookings:
+        - {label: b1, service: outlet_switch_repair, start: 2026-10-08T13:00, problem: Hallway switch}
+    customer:
+      opening: "The one on Thursday, can it be Friday instead? Same time if you have it."
+      persona:
+        name: Grace Liu
+        situation: You have an electrician Thursday 1-3pm.
+        goal: Move it to Friday, ideally 1-3pm.
+        facts: {name: Grace Liu}
+        availability: Friday (October 9). 1-3pm preferred, any Friday window is fine.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-09}]}
+
+  - id: rs-008
+    split: dev
+    title: Saturday to the next Saturday
+    clock: 2026-10-07T11:00
+    fixture:
+      customer: {name: Tom Brady, address: "1200 Grand St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: water_heater_repair, start: 2026-10-10T09:00, problem: No hot water}
+    customer:
+      opening: "Hey, we'll be away this weekend. Can the water heater visit be next Saturday instead?"
+      persona:
+        name: Tom Brady
+        situation: You have a water heater repair this Saturday 9-11am.
+        goal: Move it to next Saturday.
+        facts: {name: Tom Brady}
+        availability: Next Saturday (October 17), any time.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-17}]}
+
+  - id: rs-009
+    split: test
+    title: '"Push it back a day"'
+    fixture:
+      customer: {name: Aisha Rahman, address: "22 Newark Ave, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: lighting, start: 2026-10-08T10:00, problem: Ceiling light install}
+    customer:
+      opening: "Can we push my appointment back a day?"
+      persona:
+        name: Aisha Rahman
+        situation: You have a light install Thursday 10am-12pm.
+        goal: Move it one day later, to Friday.
+        facts: {name: Aisha Rahman}
+        availability: Friday (October 9), any time; same time would be nice.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-09}]}
+
+  - id: rs-010
+    split: dev
+    title: Across the DST change
+    clock: 2026-10-29T10:00  # Thursday
+    fixture:
+      customer: {name: Lena Fischer, address: "820 Bloomfield St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: leak_repair, start: 2026-10-30T13:00, problem: Tub faucet drip}
+    customer:
+      opening: "Need to move tomorrow's plumber to Monday morning please"
+      persona:
+        name: Lena Fischer
+        situation: You have a plumber tomorrow (Friday) 1-3pm.
+        goal: Move it to Monday morning.
+        facts: {name: Lena Fischer}
+        availability: Monday (November 2) morning.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-11-02, from: "08:00", until: "11:59"}]}
+
+  - id: rs-011
+    split: dev
+    title: Can't make it, asks what else there is
+    fixture:
+      customer: {name: Kevin Walsh, address: "510 Washington St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: leak_repair, start: 2026-10-08T15:00, problem: Drip under sink}
+    customer:
+      opening: "I can't make Thursday after all. What else do you have?"
+      persona:
+        name: Kevin Walsh
+        situation: You have a plumber Thursday 3-5pm.
+        goal: Move it to any other day this week or early next week.
+        facts: {name: Kevin Walsh}
+        availability: Any window on another day between tomorrow and next Tuesday (October 13), except Thursday. Take the first one offered that fits.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-07}, {date: 2026-10-09, through: 2026-10-13}]}
+
+  - id: rs-012
+    split: test
+    title: Terse reschedule request
+    fixture:
+      customer: {name: Jay Kim, address: "900 Park Ave, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: hvac_maintenance, start: 2026-10-08T08:00, problem: Tune-up}
+    customer:
+      opening: "need 2 move appt to fri pm"
+      persona:
+        name: Jay Kim
+        situation: You have an HVAC tune-up Thursday 8-10am.
+        goal: Move it to Friday afternoon.
+        facts: {name: Jay Kim}
+        availability: Friday (October 9) afternoon.
+        style: extremely terse
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-09, from: "12:00", until: "17:00"}]}
+
+  - id: rs-013
+    split: dev
+    title: Same day, later window
+    fixture:
+      customer: {name: Rosa Martinez, address: "3 Pavonia Ave, Jersey City", zip: "07310"}
+      bookings:
+        - {label: b1, service: power_issue, start: 2026-10-08T10:00, problem: Breaker tripping}
+    customer:
+      opening: "Could the electrician come later on Thursday instead of the morning? Like 3-5?"
+      persona:
+        name: Rosa Martinez
+        situation: You have an electrician Thursday 10am-12pm.
+        goal: Move it to Thursday 3-5pm.
+        facts: {name: Rosa Martinez}
+        availability: Thursday (October 8) afternoon, 3-5 preferred, 1-3 acceptable.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-08, from: "13:00", until: "15:00"}]}
+
+  - id: rs-014
+    split: dev
+    title: Only evenings, settles on Saturday
+    fixture:
+      customer: {name: Dev Malhotra, address: "500 Henderson St, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: drain_clog, start: 2026-10-07T13:00, problem: Slow shower drain}
+    customer:
+      opening: "I can't be home tomorrow afternoon. Do you have any evening slots?"
+      persona:
+        name: Dev Malhotra
+        situation: You have a plumber tomorrow 1-3pm.
+        goal: Move it to a time you're home.
+        facts: {name: Dev Malhotra}
+        availability: Weekday evenings after 6, or this Saturday (October 10) any time.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-10}]}
+
+  - id: rs-015
+    split: test
+    title: Reschedules and double-checks the address
+    fixture:
+      customer: {name: Helen Brooks, address: "18 Sixth St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: leak_repair, start: 2026-10-09T13:00, problem: Kitchen faucet drip}
+    customer:
+      opening: "Hi, can I change Friday's appointment to Monday? Same address of course."
+      persona:
+        name: Helen Brooks
+        situation: You have a plumber Friday 1-3pm.
+        goal: Move it to Monday.
+        facts: {name: Helen Brooks}
+        availability: Monday (October 12), any time.
+        notes: After it's moved, ask them to confirm the address they have on file.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-12}]}
+
+  - id: rs-016
+    split: dev
+    title: Replies "reschedule"
+    fixture:
+      customer: {name: Chris Ng, address: "56 Wallace Pl, Jersey City", zip: "07306"}
+      bookings:
+        - {label: b1, service: drain_clog, start: 2026-10-07T10:00, problem: Shower drain}
+    customer:
+      opening: "reschedule"
+      persona:
+        name: Chris Ng
+        situation: You have a plumber tomorrow 10am-12pm. Their last text said you could reply 'reschedule'.
+        goal: Move the visit to Thursday.
+        facts: {name: Chris Ng}
+        availability: Thursday (October 8), any time.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-08}]}
+
+  - id: rs-017
+    split: dev
+    title: Wants a date past the horizon, takes the latest
+    fixture:
+      customer: {name: Harold King, address: "150 Warren St, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: hvac_maintenance, start: 2026-10-08T10:00, problem: Tune-up}
+    customer:
+      opening: "Can my tune-up be moved to October 27? I'll be traveling until then."
+      persona:
+        name: Harold King
+        situation: You have a tune-up Thursday 10am-12pm but you're traveling.
+        goal: Move it as late as possible.
+        facts: {name: Harold King}
+        availability: October 27 ideally. If they can't book that far out, the latest they can, as long as it's on or after Friday October 16.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-16, through: 2026-10-19}]}
+
+  - id: rs-018
+    split: test
+    title: Says cancel, then decides to move it
+    fixture:
+      customer: {name: Becky Stone, address: "1 Hudson Pl, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: toilet_repair, start: 2026-10-07T15:00, problem: Running toilet}
+    customer:
+      opening: "I think I need to cancel tomorrow's appointment"
+      persona:
+        name: Becky Stone
+        situation: You have a toilet repair tomorrow 3-5pm and can't be home.
+        goal: Keep the repair but on another day. You started by saying cancel but you'd rather move it.
+        facts: {name: Becky Stone}
+        availability: Friday (October 9), any time.
+        notes: In your second message, before anything is cancelled if you can, say "actually can we just move it to Friday instead?"
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-09}]}
+
+  - id: rs-019
+    split: dev
+    title: Technician off on the wanted day
+    fixture:
+      customer: {name: Will Turner, address: "5 Exchange Pl, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: outlet_switch_repair, start: 2026-10-07T10:00, problem: Loose outlet}
+      time_off:
+        - {tech: Jenna Brooks, start: 2026-10-09T00:00, end: 2026-10-10T00:00}
+        - {tech: Sam Carter, start: 2026-10-09T00:00, end: 2026-10-09T12:00}
+    customer:
+      opening: "Can the electrician come Friday instead of Wednesday?"
+      persona:
+        name: Will Turner
+        situation: You have an electrician Wednesday 10am-12pm.
+        goal: Move it to Friday.
+        facts: {name: Will Turner}
+        availability: Friday (October 9), any time.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-09, from: "12:00"}]}
+
+  - id: rs-020
+    split: dev
+    title: Asks if it'll be the same technician
+    fixture:
+      customer: {name: Gary Holt, address: "15 Ege Ave, Jersey City", zip: "07304"}
+      bookings:
+        - {label: b1, service: heating_repair, start: 2026-10-08T13:00, problem: Thermostat blank}
+    customer:
+      opening: "Can we move Thursday's heating appointment to next Wednesday? Will it be the same tech?"
+      persona:
+        name: Gary Holt
+        situation: You have a heating repair Thursday 1-3pm.
+        goal: Move it to next Wednesday.
+        facts: {name: Gary Holt}
+        availability: Next Wednesday (October 14), any time.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-14}]}
+
+  - id: rs-021
+    split: test
+    title: Mid-November reschedule
+    clock: 2026-11-17T09:00  # Tuesday
+    fixture:
+      customer: {name: Joan Albright, address: "9 Oak St, Weehawken", zip: "07086"}
+      bookings:
+        - {label: b1, service: hvac_maintenance, start: 2026-11-19T10:00, problem: Furnace tune-up}
+    customer:
+      opening: "Hello, I need to move my furnace tune-up from Thursday to the following Monday."
+      persona:
+        name: Joan Albright
+        situation: You have a tune-up Thursday November 19, 10am-12pm.
+        goal: Move it to Monday November 23.
+        facts: {name: Joan Albright}
+        availability: Monday November 23, any time.
+        style: polite and formal
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-11-23}]}
+
+  - id: rs-022
+    split: dev
+    title: Late at night, moves tomorrow's visit
+    clock: 2026-10-06T22:30
+    fixture:
+      customer: {name: Stella Ford, address: "33 Ninth St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: water_heater_repair, start: 2026-10-07T08:00, problem: Popping noise}
+    customer:
+      opening: "sorry for the late text, can tomorrow morning's appointment be moved to the afternoon?"
+      persona:
+        name: Stella Ford
+        situation: You have a water heater repair tomorrow 8-10am.
+        goal: Move it to tomorrow afternoon.
+        facts: {name: Stella Ford}
+        availability: Tomorrow (Wednesday October 7) afternoon. If nothing is open, Thursday afternoon.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-07, through: 2026-10-08, from: "12:00", until: "17:00"}]}
+
+  - id: rs-023
+    split: dev
+    title: Changes target day mid-conversation
+    fixture:
+      customer: {name: Priya Nair, address: "160 First St, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: ac_repair, start: 2026-10-07T13:00, problem: Short cycling}
+    customer:
+      opening: "Can I move my AC appointment to Thursday?"
+      persona:
+        name: Priya Nair
+        situation: You have an AC repair tomorrow 1-3pm.
+        goal: Move it. You first ask for Thursday, then realise Friday is better.
+        facts: {name: Priya Nair}
+        availability: Friday (October 9), any time. (You first say Thursday, then change to Friday in your next message.)
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-09}]}
+
+  - id: rs-024
+    split: test
+    title: Reschedule with the booking already this afternoon
+    clock: 2026-10-06T09:15
+    fixture:
+      customer: {name: Derek Fowler, address: "45 Monticello Ave, Jersey City", zip: "07304"}
+      bookings:
+        - {label: b1, service: outlet_switch_repair, start: 2026-10-06T15:00, problem: Dead outlet}
+    customer:
+      opening: "Something came up, can the electrician come tomorrow instead of this afternoon?"
+      persona:
+        name: Derek Fowler
+        situation: You have an electrician today 3-5pm.
+        goal: Move it to tomorrow.
+        facts: {name: Derek Fowler}
+        availability: Tomorrow (Wednesday), any time.
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-07}]}
+
+  - id: rs-025
+    split: dev
+    title: Polite, wants the same window a week later
+    fixture:
+      customer: {name: Dorothy Haines, address: "140 Bloomfield St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: leak_repair, start: 2026-10-08T10:00, problem: Leak under kitchen sink}
+    customer:
+      opening: "Good morning. My daughter is visiting on Thursday. Might we move the plumber to the same time the following week?"
+      persona:
+        name: Dorothy Haines
+        situation: You have a plumber Thursday October 8, 10am-12pm.
+        goal: Move it to the same time a week later.
+        facts: {name: Dorothy Haines}
+        availability: Thursday October 15, morning only.
+        style: formal and polite
+    expect:
+      existing:
+        b1: {state: rescheduled, windows: [{date: 2026-10-15, from: "08:00", until: "11:59"}]}

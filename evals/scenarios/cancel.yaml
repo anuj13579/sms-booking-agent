@@ -1,0 +1,354 @@
+# Cancellations. "Cancel my appointment" (more than one word) goes to the agent and must cancel
+# the right booking. A bare "cancel" is a carrier opt-out keyword (D-020): the customer is
+# unsubscribed and the booking is left alone.
+category: cancel
+defaults:
+  clock: 2026-10-06T09:15  # Tuesday
+  customer:
+    kind: simulated
+    max_turns: 6
+  expect:
+    escalate: []
+    bookings: {new: 0}
+    opted_out: false
+
+scenarios:
+  - id: cx-001
+    split: dev
+    title: Cancel my appointment
+    fixture:
+      customer: {name: Pat Lee, address: "12 River St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: ac_repair, start: 2026-10-08T10:00, problem: AC blowing warm air}
+    customer:
+      opening: "Hi, please cancel my appointment, the AC started working again."
+      persona:
+        name: Pat Lee
+        situation: You have an AC repair Thursday 10am-12pm; the AC fixed itself.
+        goal: Cancel the visit.
+        facts: {name: Pat Lee}
+    expect:
+      existing: {b1: cancelled}
+
+  - id: cx-002
+    split: dev
+    title: Bare "Cancel" opts out and leaves the booking
+    fixture:
+      customer: {name: Sam Ortiz, address: "88 Garden St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: drain_clog, start: 2026-10-07T13:00, problem: Kitchen sink clogged}
+    customer:
+      kind: scripted
+      messages: ["Cancel"]
+    expect:
+      existing: {b1: unchanged}
+      opted_out: true
+
+  - id: cx-003
+    split: test
+    title: Bare "CANCEL." with punctuation
+    fixture:
+      customer: {name: Margaret Chen, address: "301 Bloomfield St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: toilet_repair, start: 2026-10-12T10:00, problem: Running toilet}
+    customer:
+      kind: scripted
+      messages: ["CANCEL.", "hello?"]
+    expect:
+      existing: {b1: unchanged}
+      opted_out: true
+
+  - id: cx-004
+    split: dev
+    title: '"I need to cancel"'
+    fixture:
+      customer: {name: Derek Fowler, address: "45 Monticello Ave, Jersey City", zip: "07304"}
+      bookings:
+        - {label: b1, service: outlet_switch_repair, start: 2026-10-07T13:00, problem: Dead outlet}
+    customer:
+      opening: "I need to cancel tomorrow"
+      persona:
+        name: Derek Fowler
+        situation: You have an electrician tomorrow 1-3pm and won't need it after all.
+        goal: Cancel the visit.
+        facts: {name: Derek Fowler}
+    expect:
+      existing: {b1: cancelled}
+
+  - id: cx-005
+    split: dev
+    title: Two bookings, cancels the electrician only
+    fixture:
+      customer: {name: Janet Moore, address: "29 Erie St, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: outlet_switch_repair, start: 2026-10-08T08:00, problem: Dead outlet}
+        - {label: b2, service: leak_repair, start: 2026-10-09T13:00, problem: Faucet drip}
+    customer:
+      opening: "Please cancel the electrician visit, my brother-in-law fixed the outlet. Keep the plumber."
+      persona:
+        name: Janet Moore
+        situation: You have an electrician Thursday morning and a plumber Friday afternoon.
+        goal: Cancel only the electrician.
+        facts: {name: Janet Moore}
+    expect:
+      existing: {b1: cancelled, b2: unchanged}
+
+  - id: cx-006
+    split: test
+    title: Two bookings, cancels both
+    fixture:
+      customer: {name: Victor Osei, address: "61 Wayne St, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: heating_repair, start: 2026-10-07T10:00, problem: Furnace banging}
+        - {label: b2, service: lighting, start: 2026-10-09T15:00, problem: New fixture install}
+    customer:
+      opening: "We're moving out early, please cancel both of my appointments."
+      persona:
+        name: Victor Osei
+        situation: You have two upcoming visits and you're moving out.
+        goal: Cancel both visits.
+        facts: {name: Victor Osei}
+    expect:
+      existing: {b1: cancelled, b2: cancelled}
+
+  - id: cx-007
+    split: dev
+    title: Cancels with a reason
+    fixture:
+      customer: {name: Kevin Walsh, address: "510 Washington St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: leak_repair, start: 2026-10-08T15:00, problem: Drip under sink}
+    customer:
+      opening: "Can you cancel my plumbing appointment? I tightened the fitting and the drip stopped."
+      persona:
+        name: Kevin Walsh
+        situation: You have a plumber Thursday 3-5pm; you fixed the drip yourself.
+        goal: Cancel.
+        facts: {name: Kevin Walsh}
+    expect:
+      existing: {b1: cancelled}
+
+  - id: cx-008
+    split: dev
+    title: '"Please cancel Thursday"'
+    fixture:
+      customer: {name: Grace Liu, address: "200 Boulevard East, Weehawken", zip: "07086"}
+      bookings:
+        - {label: b1, service: outlet_switch_repair, start: 2026-10-08T13:00, problem: Hallway switch}
+    customer:
+      opening: "please cancel thursday"
+      persona:
+        name: Grace Liu
+        situation: You have an electrician Thursday 1-3pm.
+        goal: Cancel it.
+        facts: {name: Grace Liu}
+        style: lowercase, brief
+    expect:
+      existing: {b1: cancelled}
+
+  - id: cx-009
+    split: test
+    title: Cancels, will text again later
+    fixture:
+      customer: {name: Linda Park, address: "77 Hudson St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: hvac_maintenance, start: 2026-10-12T13:00, problem: Tune-up}
+    customer:
+      opening: "Hi, I have to go out of town. Cancel my tune-up for now please, I'll text again when I'm back."
+      persona:
+        name: Linda Park
+        situation: You have a tune-up next Monday 1-3pm and you're traveling.
+        goal: Cancel for now; you'll rebook yourself later. Don't book anything new now.
+        facts: {name: Linda Park}
+        notes: If they offer to rebook now, say no thanks, you'll text when you're back.
+    expect:
+      existing: {b1: cancelled}
+
+  - id: cx-010
+    split: dev
+    title: Two bookings, says which when asked
+    fixture:
+      customer: {name: Omar Haddad, address: "70 Columbus Dr, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: ac_repair, start: 2026-10-07T08:00, problem: AC grinding}
+        - {label: b2, service: drain_clog, start: 2026-10-09T10:00, problem: Tub drain}
+    customer:
+      opening: "I want to cancel my appointment"
+      persona:
+        name: Omar Haddad
+        situation: You have an AC repair tomorrow morning and a plumber Friday morning.
+        goal: Cancel only the plumber; keep the AC repair.
+        facts: {name: Omar Haddad}
+        notes: Don't say which until they ask. Then say the plumber one.
+    expect:
+      existing: {b1: unchanged, b2: cancelled}
+
+  - id: cx-011
+    split: dev
+    title: '"cancel appt pls"'
+    fixture:
+      customer: {name: Jay Kim, address: "900 Park Ave, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: hvac_maintenance, start: 2026-10-08T08:00, problem: Tune-up}
+    customer:
+      opening: "cancel appt pls"
+      persona:
+        name: Jay Kim
+        situation: You have a tune-up Thursday 8-10am.
+        goal: Cancel it.
+        facts: {name: Jay Kim}
+        style: extremely terse
+    expect:
+      existing: {b1: cancelled}
+
+  - id: cx-012
+    split: test
+    title: Cancels and asks about a cancellation fee
+    fixture:
+      customer: {name: Helen Brooks, address: "18 Sixth St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: leak_repair, start: 2026-10-07T13:00, problem: Kitchen faucet drip}
+    customer:
+      opening: "I need to cancel tomorrow's appointment. Is there a cancellation fee?"
+      persona:
+        name: Helen Brooks
+        situation: You have a plumber tomorrow 1-3pm.
+        goal: Cancel, and find out if there's a fee.
+        facts: {name: Helen Brooks}
+    expect:
+      existing: {b1: cancelled}
+      escalate: [price_quote]
+
+  - id: cx-013
+    split: dev
+    title: Nothing to cancel
+    fixture:
+      customer: {name: Chris Ng, address: "56 Wallace Pl, Jersey City", zip: "07306"}
+    customer:
+      opening: "Please cancel my appointment for tomorrow"
+      persona:
+        name: Chris Ng
+        situation: You think you booked a plumber, but you actually booked with a different company.
+        goal: Cancel your appointment.
+        facts: {name: Chris Ng}
+        notes: If they say there's no appointment on file, say "oh, must have been another company, sorry" and end.
+    expect:
+      bookings: {new: 0, created: 0}
+
+  - id: cx-014
+    split: dev
+    title: Spanish cancellation
+    fixture:
+      customer: {name: Carmen Ruiz, address: "5100 Palisade Ave, West New York", zip: "07093"}
+      bookings:
+        - {label: b1, service: water_heater_repair, start: 2026-10-08T10:00, problem: No hot water}
+    customer:
+      opening: "Hola, quiero cancelar mi cita del jueves por favor"
+      persona:
+        name: Carmen Ruiz
+        situation: You have a water heater repair Thursday 10am-12pm; your nephew fixed it.
+        goal: Cancel the visit.
+        facts: {name: Carmen Ruiz}
+        style: writes in Spanish, understands simple English
+    expect:
+      existing: {b1: cancelled}
+
+  - id: cx-015
+    split: test
+    title: Scripted "Cancel my appointment"
+    fixture:
+      customer: {name: Tom Brady, address: "1200 Grand St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: water_heater_repair, start: 2026-10-10T09:00, problem: No hot water}
+    customer:
+      kind: scripted
+      messages: ["Cancel my appointment", "Yes, the Saturday one. Thanks"]
+    expect:
+      existing: {b1: cancelled}
+
+  - id: cx-016
+    split: dev
+    title: '"Don''t need the visit anymore"'
+    fixture:
+      customer: {name: Aisha Rahman, address: "22 Newark Ave, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: lighting, start: 2026-10-08T10:00, problem: Ceiling light install}
+    customer:
+      opening: "Hey, turns out I don't need the light installed anymore, the landlord is doing it. Can you take me off the schedule for Thursday?"
+      persona:
+        name: Aisha Rahman
+        situation: You have a light install Thursday 10am-12pm; your landlord will do it.
+        goal: Cancel the visit.
+        facts: {name: Aisha Rahman}
+    expect:
+      existing: {b1: cancelled}
+
+  - id: cx-017
+    split: dev
+    title: Saturday only, Saturday is full, cancels
+    clock: 2026-10-07T11:00
+    fixture:
+      customer: {name: Dev Malhotra, address: "500 Henderson St, Jersey City", zip: "07302"}
+      bookings:
+        - {label: b1, service: drain_clog, start: 2026-10-08T13:00, problem: Slow shower drain}
+      busy:
+        - {date: 2026-10-10}
+    customer:
+      opening: "Can you move my plumber to Saturday? If not just cancel it."
+      persona:
+        name: Dev Malhotra
+        situation: You have a plumber Thursday 1-3pm but you can't be home on weekdays.
+        goal: Move it to this Saturday; if Saturday isn't possible, cancel it.
+        facts: {name: Dev Malhotra}
+        availability: This Saturday (October 10) only.
+        notes: If Saturday is full, ask them to cancel. Don't accept any other day.
+    expect:
+      existing: {b1: cancelled}
+
+  - id: cx-018
+    split: test
+    title: Books, then cancels in the same conversation
+    customer:
+      opening: "kitchen sink is clogged, any time this week is fine"
+      persona:
+        name: Sam Ortiz
+        situation: The kitchen sink is clogged.
+        goal: Book a plumber, then, once it's booked and confirmed, cancel it because you fixed it yourself.
+        facts: {name: Sam Ortiz, address: "88 Garden St, Hoboken", zip: "07030"}
+        availability: Any time this week; take the earliest.
+        notes: As soon as they confirm the booking, reply "actually I just fixed it myself, please cancel my appointment".
+    expect:
+      bookings: {new: 0, created: 1}
+
+  - id: cx-019
+    split: dev
+    title: Cancel the earlier of two same-trade bookings
+    fixture:
+      customer: {name: Rosa Martinez, address: "3 Pavonia Ave, Jersey City", zip: "07310"}
+      bookings:
+        - {label: b1, service: power_issue, start: 2026-10-07T10:00, problem: Breaker tripping}
+        - {label: b2, service: lighting, start: 2026-10-14T13:00, problem: Kitchen light}
+    customer:
+      opening: "Please cancel tomorrow's electrician, but keep the one next week."
+      persona:
+        name: Rosa Martinez
+        situation: You have an electrician tomorrow morning and another next Wednesday afternoon.
+        goal: Cancel only tomorrow's visit.
+        facts: {name: Rosa Martinez}
+    expect:
+      existing: {b1: cancelled, b2: unchanged}
+
+  - id: cx-020
+    split: dev
+    title: Bare lowercase "cancel" with two bookings
+    fixture:
+      customer: {name: Gary Holt, address: "15 Ege Ave, Jersey City", zip: "07304"}
+      bookings:
+        - {label: b1, service: heating_repair, start: 2026-10-08T13:00, problem: Thermostat blank}
+        - {label: b2, service: leak_repair, start: 2026-10-09T08:00, problem: Faucet}
+    customer:
+      kind: scripted
+      messages: ["cancel"]
+    expect:
+      existing: {b1: unchanged, b2: unchanged}
+      opted_out: true

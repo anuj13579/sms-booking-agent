@@ -1,0 +1,657 @@
+# Ambiguous or incomplete requests: vague problems, relative dates, missing or wrong details,
+# times the business doesn't offer. The agent has to ask, clarify, and still book the right thing.
+category: ambiguous
+defaults:
+  clock: 2026-10-06T09:15  # Tuesday
+  customer:
+    kind: simulated
+    max_turns: 10
+  expect:
+    escalate: []
+    bookings: {new: 1}
+
+scenarios:
+  - id: amb-001
+    split: dev
+    title: Vague "heater thing" turns out to be a noisy furnace
+    customer:
+      opening: "something's wrong with my heater thing"
+      persona:
+        name: Bill Turner
+        situation: The furnace makes a loud rattling sound when it runs. House is warm.
+        goal: Have someone fix the furnace noise.
+        facts: {name: Bill Turner, address: "48 Park Ave, Hoboken", zip: "07030", details: "the furnace in the basement rattles loudly when the heat comes on; it still heats"}
+        availability: Thursday or Friday, any time.
+        notes: Only describe the problem properly when asked what's going on.
+    expect:
+      bookings:
+        service: [heating_repair, hvac_maintenance]
+        windows: [{date: 2026-10-08, through: 2026-10-09}]
+        address: "48 Park"
+        zip: "07030"
+
+  - id: amb-002
+    split: dev
+    title: Rusty-looking hot water
+    customer:
+      opening: "my water looks kinda brown, is that something you guys deal with?"
+      persona:
+        name: Keisha Brown
+        situation: Only the hot water comes out brownish; cold water is clear. Tank is 12 years old.
+        goal: Book someone to check the water heater.
+        facts: {name: Keisha Brown, address: "37 Cornelison Ave, Jersey City", zip: "07304", details: "only the hot water is brown, cold is fine"}
+        availability: Tomorrow, any time.
+    expect:
+      bookings:
+        service: [water_heater_repair]
+        windows: [{date: 2026-10-07}]
+        address: "37 Cornelison"
+        zip: "07304"
+
+  - id: amb-003
+    split: test
+    title: Opens with just "hi"
+    customer:
+      opening: "hi"
+      persona:
+        name: Tara Singh
+        situation: The AC blows warm air.
+        goal: Book an AC repair.
+        facts: {name: Tara Singh, address: "15 Second St, Hoboken", zip: "07030"}
+        availability: Friday morning.
+        notes: Say what you need only after the business asks.
+    expect:
+      bookings:
+        service: [ac_repair]
+        windows: [{date: 2026-10-09, from: "08:00", until: "11:59"}]
+        address: "15 Second"
+        zip: "07030"
+
+  - id: amb-004
+    split: dev
+    title: '"ASAP" with no day, takes the earliest'
+    customer:
+      opening: "Need a plumber ASAP, toilet clogged and won't flush"
+      persona:
+        name: Rich Gallo
+        situation: The only toilet is clogged; plunging didn't work. No water on the floor.
+        goal: Get the earliest possible visit.
+        facts: {name: Rich Gallo, address: "240 Jefferson St, Hoboken", zip: "07030"}
+        availability: Whatever is earliest.
+    expect:
+      bookings:
+        service: [drain_clog, toilet_repair]
+        windows: [{date: 2026-10-06, through: 2026-10-07}]
+        address: "240 Jefferson"
+        zip: "07030"
+
+  - id: amb-005
+    split: dev
+    title: "Day after tomorrow"
+    customer:
+      opening: "Can an electrician come the day after tomorrow? Bathroom light stopped working"
+      persona:
+        name: Lucy Hart
+        situation: The bathroom ceiling light doesn't come on; bulbs are new.
+        goal: Book an electrician the day after tomorrow.
+        facts: {name: Lucy Hart, address: "19 Bergen Ave, Jersey City", zip: "07305"}
+        availability: The day after tomorrow (Thursday October 8), any time.
+    expect:
+      bookings:
+        service: [lighting, outlet_switch_repair]
+        windows: [{date: 2026-10-08}]
+        address: "19 Bergen"
+        zip: "07305"
+
+  - id: amb-006
+    split: test
+    title: '"Next Tuesday" said on a Tuesday'
+    customer:
+      opening: "Do you have anything next Tuesday? Need the AC looked at, it's leaking"
+      persona:
+        name: Gabe Moreno
+        situation: Water drips from the indoor AC unit.
+        goal: Book an AC repair next Tuesday.
+        facts: {name: Gabe Moreno, address: "88 Erie St, Jersey City", zip: "07302"}
+        availability: Next Tuesday, meaning a week from today (October 13). Any time.
+        notes: If they ask which Tuesday, say a week from today.
+    expect:
+      bookings:
+        service: [ac_repair]
+        windows: [{date: 2026-10-13}]
+        address: "88 Erie"
+        zip: "07302"
+
+  - id: amb-007
+    split: dev
+    title: Asks for Sunday, they're closed, takes Monday
+    clock: 2026-10-08T13:00
+    customer:
+      opening: "Can someone come Sunday to fix a running toilet?"
+      persona:
+        name: Erin Walsh
+        situation: The toilet runs constantly.
+        goal: Book a toilet repair.
+        facts: {name: Erin Walsh, address: "60 Washington St, Hoboken", zip: "07030"}
+        availability: Sunday ideally; if they're closed, Monday (October 12) any time.
+    expect:
+      bookings:
+        service: [toilet_repair]
+        windows: [{date: 2026-10-12}]
+        address: "60 Washington"
+        zip: "07030"
+
+  - id: amb-008
+    split: dev
+    title: Outside the service area, nothing booked
+    customer:
+      opening: "Hi, can you send someone to fix my AC? It won't turn on"
+      persona:
+        name: Nina Patel
+        situation: The AC won't start.
+        goal: Book an AC repair.
+        facts: {name: Nina Patel, address: "100 Main St, Hackensack", zip: "07601"}
+        availability: Any time this week.
+        notes: If they say they don't cover your area, accept it and end the conversation.
+    expect:
+      escalate: null
+      bookings: {new: 0, created: 0}
+
+  - id: amb-009
+    split: test
+    title: Gives the wrong ZIP, then corrects it
+    customer:
+      opening: "need a plumber for a leaky kitchen faucet"
+      persona:
+        name: Joe Romano
+        situation: The kitchen faucet drips.
+        goal: Book a leak repair.
+        facts: {name: Joe Romano, address: "512 Adams St, Hoboken", zip: "07030"}
+        availability: Thursday afternoon.
+        notes: The first time you give your ZIP, say 07003 by mistake. In your very next message, say "sorry, typo, it's 07030".
+    expect:
+      bookings:
+        service: [leak_repair]
+        windows: [{date: 2026-10-08, from: "12:00", until: "17:00"}]
+        address: "512 Adams"
+        zip: "07030"
+
+  - id: amb-010
+    split: dev
+    title: Electric water heater, unsure which trade
+    customer:
+      opening: "Not sure if this is plumbing or electrical, my electric water heater stopped heating"
+      persona:
+        name: Amy Cho
+        situation: An electric tank water heater; no hot water since last night. Breaker is on.
+        goal: Book whoever can fix it.
+        facts: {name: Amy Cho, address: "77 Fifth St, Hoboken", zip: "07030"}
+        availability: Today or tomorrow.
+    expect:
+      bookings:
+        service: [water_heater_repair]
+        windows: [{date: 2026-10-06, through: 2026-10-07}]
+        address: "77 Fifth"
+        zip: "07030"
+
+  - id: amb-011
+    split: dev
+    title: AC and a dead outlet, books the AC
+    customer:
+      opening: "My AC is making a weird hum and also one outlet in the den is dead. Can you help with either?"
+      persona:
+        name: Paul Greer
+        situation: The AC hums loudly but works; one outlet has no power (nothing burnt).
+        goal: Book the AC repair now. The outlet can wait; you'll deal with it another time.
+        facts: {name: Paul Greer, address: "910 Hudson St, Hoboken", zip: "07030"}
+        availability: Friday, any time.
+        notes: If asked which to do first, say the AC, and that the outlet can wait for another time.
+    expect:
+      bookings:
+        service: [ac_repair]
+        windows: [{date: 2026-10-09}]
+        address: "910 Hudson"
+        zip: "07030"
+
+  - id: amb-012
+    split: test
+    title: Wants after work, takes Saturday
+    customer:
+      opening: "Can a plumber come after work, like 6 or 7? Shower is draining super slow"
+      persona:
+        name: Dev Malhotra
+        situation: The shower drain is very slow.
+        goal: Book a drain clearing.
+        facts: {name: Dev Malhotra, address: "500 Henderson St, Jersey City", zip: "07302"}
+        availability: Weekday evenings after 6. If they don't do evenings, this Saturday (October 10) any time.
+    expect:
+      bookings:
+        service: [drain_clog]
+        windows: [{date: 2026-10-10}]
+        address: "500 Henderson"
+        zip: "07302"
+
+  - id: amb-013
+    split: dev
+    title: Heavy typos
+    customer:
+      opening: "my toliet wont flsuh rite, handel is loose??"
+      persona:
+        name: Cody Vance
+        situation: The toilet handle is loose and the flush is weak.
+        goal: Book a toilet repair.
+        facts: {name: Cody Vance, address: "33 Bowers St, Jersey City", zip: "07307"}
+        availability: Wenesday or thursday any tim
+        style: lots of typos and misspellings, lowercase
+    expect:
+      bookings:
+        service: [toilet_repair]
+        windows: [{date: 2026-10-07, through: 2026-10-08}]
+        address: "33 Bowers"
+        zip: "07307"
+
+  - id: amb-014
+    split: dev
+    title: '"This weekend" means Saturday'
+    customer:
+      opening: "Any chance someone can install a new light fixture this weekend?"
+      persona:
+        name: Ella Novak
+        situation: She bought a new kitchen pendant light to replace an old fixture.
+        goal: Book the install this weekend.
+        facts: {name: Ella Novak, address: "202 River St, Hoboken", zip: "07030"}
+        availability: This weekend. Saturday October 10 any time; Sunday would be fine too if they were open.
+    expect:
+      bookings:
+        service: [lighting]
+        windows: [{date: 2026-10-10}]
+        address: "202 River"
+        zip: "07030"
+
+  - id: amb-015
+    split: test
+    title: Asks for a date past the booking horizon
+    customer:
+      opening: "Can I book a furnace tune-up for October 26th?"
+      persona:
+        name: Harold King
+        situation: Routine service; he's away until late October.
+        goal: Book a tune-up as late as possible.
+        facts: {name: Harold King, address: "150 Warren St, Jersey City", zip: "07302"}
+        availability: October 26 ideally. If they can't book that far ahead, the latest date they can offer, as long as it's on or after Thursday October 15.
+    expect:
+      bookings:
+        service: [hvac_maintenance]
+        windows: [{date: 2026-10-15, through: 2026-10-19}]
+        address: "150 Warren"
+        zip: "07302"
+
+  - id: amb-016
+    split: dev
+    title: Street address without a town
+    customer:
+      opening: "Need an electrician, outlet in the kitchen stopped working"
+      persona:
+        name: Sara Levin
+        situation: A kitchen outlet has no power; the GFCI reset button doesn't help.
+        goal: Book an electrician.
+        facts: {name: Sara Levin, address: "34 Grand St, Jersey City", zip: "07302"}
+        availability: Thursday morning.
+        notes: When asked for your address, give only "34 Grand St". Give the town and ZIP only if asked again.
+    expect:
+      bookings:
+        service: [outlet_switch_repair, power_issue]
+        windows: [{date: 2026-10-08, from: "08:00", until: "11:59"}]
+        address: "34 Grand"
+        zip: "07302"
+
+  - id: amb-017
+    split: dev
+    title: Outdoor AC unit iced over
+    customer:
+      opening: "the outside part of my AC is covered in ice, is that bad?"
+      persona:
+        name: Ricky Tan
+        situation: The outdoor condenser coil has ice on it; the AC is blowing weakly.
+        goal: Book an AC repair.
+        facts: {name: Ricky Tan, address: "6 Duncan Ave, Jersey City", zip: "07304"}
+        availability: Tomorrow or Thursday.
+    expect:
+      bookings:
+        service: [ac_repair]
+        windows: [{date: 2026-10-07, through: 2026-10-08}]
+        address: "6 Duncan"
+        zip: "07304"
+
+  - id: amb-018
+    split: test
+    title: No hot water at all
+    customer:
+      opening: "We have no hot water at all since this morning. Family of five. Help"
+      persona:
+        name: Monica Diaz
+        situation: Gas water heater, no hot water at all. No gas smell, pilot seems out.
+        goal: Get the soonest visit.
+        facts: {name: Monica Diaz, address: "711 Clinton St, Hoboken", zip: "07030"}
+        availability: Today if at all possible, otherwise tomorrow morning.
+    expect:
+      bookings:
+        service: [water_heater_repair]
+        windows: [{date: 2026-10-06}, {date: 2026-10-07, from: "08:00", until: "11:59"}]
+        address: "711 Clinton"
+        zip: "07030"
+
+  - id: amb-019
+    split: dev
+    title: Apartment with a unit number
+    customer:
+      opening: "Hi, our bathroom sink is clogged. We're in an apartment building."
+      persona:
+        name: Yuki Tanaka
+        situation: The bathroom sink is fully clogged.
+        goal: Book a drain clearing.
+        facts: {name: Yuki Tanaka, address: "1 Second St Apt 4B, Jersey City", zip: "07302"}
+        availability: Friday morning.
+    expect:
+      bookings:
+        service: [drain_clog]
+        windows: [{date: 2026-10-09, from: "08:00", until: "11:59"}]
+        address: "4B"
+        zip: "07302"
+
+  - id: amb-020
+    split: dev
+    title: Earliest next week, any time
+    customer:
+      opening: "I'm away this week. Whatever's earliest next week works for an AC tune-up."
+      persona:
+        name: Glen Abbott
+        situation: Routine AC service.
+        goal: Book the earliest tune-up next week.
+        facts: {name: Glen Abbott, address: "222 Willow Ave, Hoboken", zip: "07030"}
+        availability: Any time next week, Monday October 12 to Saturday October 17. Not this week.
+    expect:
+      bookings:
+        service: [hvac_maintenance]
+        windows: [{date: 2026-10-12, through: 2026-10-17}]
+        address: "222 Willow"
+        zip: "07030"
+
+  - id: amb-021
+    split: test
+    title: '"Morning" means early morning only'
+    customer:
+      opening: "Can a plumber come Thursday morning? Water heater is leaking a little."
+      persona:
+        name: Jackie Lam
+        situation: A small drip from the water heater's relief valve.
+        goal: Book a water heater repair Thursday.
+        facts: {name: Jackie Lam, address: "58 Ferry St, Jersey City", zip: "07307"}
+        availability: Thursday (October 8) before 10am only; she leaves for work at 10. If 8-10 isn't open, Friday 8-10.
+    expect:
+      bookings:
+        service: [water_heater_repair, leak_repair]
+        windows: [{date: 2026-10-08, through: 2026-10-09, from: "08:00", until: "08:00"}]
+        address: "58 Ferry"
+        zip: "07307"
+
+  - id: amb-022
+    split: dev
+    title: '"Tomorrow" just before midnight'
+    clock: 2026-10-11T23:50  # Sunday night
+    customer:
+      opening: "can someone come tomorrow to look at my dead outlet"
+      persona:
+        name: Max Bauer
+        situation: A bedroom outlet stopped working; nothing burnt.
+        goal: Book an electrician tomorrow.
+        facts: {name: Max Bauer, address: "41 Paterson Plank Rd, Jersey City", zip: "07307"}
+        availability: Tomorrow, Monday October 12, any time.
+    expect:
+      bookings:
+        service: [outlet_switch_repair, power_issue]
+        windows: [{date: 2026-10-12}]
+        address: "41 Paterson"
+        zip: "07307"
+
+  - id: amb-023
+    split: dev
+    title: '"The 14th"'
+    customer:
+      opening: "Is the 14th open for a plumber? Kitchen faucet needs fixing"
+      persona:
+        name: Irene Costa
+        situation: The kitchen faucet leaks at the base.
+        goal: Book a leak repair on the 14th.
+        facts: {name: Irene Costa, address: "26 Garden St, Hoboken", zip: "07030"}
+        availability: October 14, any time.
+    expect:
+      bookings:
+        service: [leak_repair]
+        windows: [{date: 2026-10-14}]
+        address: "26 Garden"
+        zip: "07030"
+
+  - id: amb-024
+    split: test
+    title: Wednesday or Thursday, whichever is earlier
+    customer:
+      opening: "AC filter tune-up please, wed or thurs, whichever's earlier"
+      persona:
+        name: Dan Ortiz
+        situation: Routine AC maintenance.
+        goal: Book a tune-up.
+        facts: {name: Dan Ortiz, address: "300 Second St, Jersey City", zip: "07302"}
+        availability: Wednesday or Thursday, any time.
+    expect:
+      bookings:
+        service: [hvac_maintenance]
+        windows: [{date: 2026-10-07, through: 2026-10-08}]
+        address: "300 Second"
+        zip: "07302"
+
+  - id: amb-025
+    split: dev
+    title: Reluctant to give a name
+    customer:
+      opening: "how soon can u fix a slow drain"
+      persona:
+        name: Ray Okafor
+        situation: The bathroom sink drains slowly.
+        goal: Book a drain clearing.
+        facts: {name: Ray Okafor, address: "17 Monitor St, Jersey City", zip: "07304"}
+        availability: Thursday any time.
+        notes: The first time they ask for your name, ask why they need it. Give it if they explain.
+    expect:
+      bookings:
+        service: [drain_clog]
+        windows: [{date: 2026-10-08}]
+        address: "17 Monitor"
+        zip: "07304"
+
+  - id: amb-026
+    split: dev
+    title: Mostly Spanish
+    customer:
+      opening: "Hola, mi calentador de agua no calienta. Pueden venir mañana?"
+      persona:
+        name: Carmen Ruiz
+        situation: Her water heater doesn't heat the water.
+        goal: Book a water heater repair tomorrow.
+        facts: {name: Carmen Ruiz, address: "5100 Palisade Ave, West New York", zip: "07093"}
+        availability: Tomorrow (Wednesday), any time.
+        style: writes mostly in Spanish with a few English words; understands simple English
+    expect:
+      bookings:
+        service: [water_heater_repair]
+        windows: [{date: 2026-10-07}]
+        address: "5100 Palisade"
+        zip: "07093"
+
+  - id: amb-027
+    split: test
+    title: Replies "10" to pick a window
+    customer:
+      opening: "Need my thermostat wiring checked, the heat comes on randomly"
+      persona:
+        name: Ted Lyons
+        situation: The heat turns on by itself at odd times.
+        goal: Book a heating repair.
+        facts: {name: Ted Lyons, address: "130 Bay St, Jersey City", zip: "07302"}
+        availability: Thursday morning.
+        notes: When offered windows, reply with just the start hour of the one you want, like "10".
+    expect:
+      bookings:
+        service: [heating_repair, hvac_maintenance]
+        windows: [{date: 2026-10-08, from: "08:00", until: "11:59"}]
+        address: "130 Bay"
+        zip: "07302"
+
+  - id: amb-028
+    split: dev
+    title: Picks "the second one"
+    customer:
+      opening: "Can I get someone out for a leaky outdoor spigot?"
+      persona:
+        name: Wendy Shaw
+        situation: The outdoor hose spigot drips constantly.
+        goal: Book a leak repair.
+        facts: {name: Wendy Shaw, address: "64 Hamilton Ave, Weehawken", zip: "07086"}
+        availability: Any time this week or next; pick the second option offered.
+        notes: When offered windows, reply "the second one".
+    expect:
+      bookings:
+        service: [leak_repair]
+        windows: [{date: 2026-10-06, through: 2026-10-19}]
+        address: "64 Hamilton"
+        zip: "07086"
+
+  - id: amb-029
+    split: dev
+    title: Washer standpipe backs up
+    customer:
+      opening: "When my washing machine drains, water comes back up out of the drain pipe behind it"
+      persona:
+        name: Ahmed Saleh
+        situation: The laundry standpipe overflows when the washer drains. The washer itself works.
+        goal: Book a plumber for the drain.
+        facts: {name: Ahmed Saleh, address: "2800 Kennedy Blvd, Jersey City", zip: "07306"}
+        availability: Friday any time.
+        notes: If asked, the washing machine works fine; it's the drain pipe that backs up.
+    expect:
+      bookings:
+        service: [drain_clog]
+        windows: [{date: 2026-10-09}]
+        address: "2800 Kennedy"
+        zip: "07306"
+
+  - id: amb-030
+    split: test
+    title: Clogged toilet, two plausible services
+    customer:
+      opening: "toilet is clogged and the plunger isn't doing anything"
+      persona:
+        name: Liam Byrne
+        situation: The toilet is clogged; water level is high but not overflowing.
+        goal: Book a plumber.
+        facts: {name: Liam Byrne, address: "80 Hudson St, Hoboken", zip: "07030"}
+        availability: Tomorrow morning.
+    expect:
+      bookings:
+        service: [drain_clog, toilet_repair]
+        windows: [{date: 2026-10-07, from: "08:00", until: "11:59"}]
+        address: "80 Hudson"
+        zip: "07030"
+
+  - id: amb-031
+    split: dev
+    title: Replace a thermostat
+    customer:
+      opening: "I want to replace my old thermostat with a new programmable one. Is that something you do?"
+      persona:
+        name: Cathy Wolfe
+        situation: Old round dial thermostat; she bought a programmable one.
+        goal: Book an HVAC visit to install it.
+        facts: {name: Cathy Wolfe, address: "400 Palisade Ave, Union City", zip: "07087"}
+        availability: Next Monday or Tuesday (October 12 or 13).
+    expect:
+      bookings:
+        service: [hvac_maintenance, heating_repair, ac_repair]
+        windows: [{date: 2026-10-12, through: 2026-10-13}]
+        address: "400 Palisade"
+        zip: "07087"
+
+  - id: amb-032
+    split: dev
+    title: Booking for a parent at another address
+    customer:
+      opening: "Hi, I'm texting for my dad, his kitchen sink is leaking underneath. Can someone go to his place?"
+      persona:
+        name: Laura Mendez
+        situation: Her father's kitchen sink leaks underneath. He's home all day.
+        goal: Book a leak repair at her father's address.
+        facts: {name: "Laura Mendez (booking for her dad, Jorge Mendez)", address: "Dad's place: 77 Avenue E, Bayonne", zip: "07002"}
+        availability: Any weekday this week after today.
+        notes: Your own address doesn't matter; the visit is at your dad's place, 77 Avenue E, Bayonne 07002.
+    expect:
+      bookings:
+        service: [leak_repair]
+        windows: [{date: 2026-10-07, through: 2026-10-09}]
+        address: "77 Avenue E"
+        zip: "07002"
+
+  - id: amb-033
+    split: test
+    title: '"Sometime after lunch Friday"'
+    customer:
+      opening: "Can someone check my AC sometime after lunch on Friday?"
+      persona:
+        name: Phil Carter
+        situation: The AC smells musty when it starts.
+        goal: Book an AC visit Friday afternoon.
+        facts: {name: Phil Carter, address: "123 Sixth St, Hoboken", zip: "07030"}
+        availability: Friday (October 9) after 12.
+    expect:
+      bookings:
+        service: [ac_repair, hvac_maintenance]
+        windows: [{date: 2026-10-09, from: "12:00", until: "17:00"}]
+        address: "123 Sixth"
+        zip: "07030"
+
+  - id: amb-034
+    split: dev
+    title: Asks for a time inside the lead time
+    clock: 2026-10-06T14:30
+    customer:
+      opening: "Can someone come at 3 today? The light switch in my bedroom is broken"
+      persona:
+        name: Gina Russo
+        situation: The bedroom light switch is broken; it flips but does nothing.
+        goal: Book an electrician.
+        facts: {name: Gina Russo, address: "5 Marin Blvd, Jersey City", zip: "07302"}
+        availability: Today at 3 ideally; if that's too soon, tomorrow any time.
+    expect:
+      bookings:
+        service: [outlet_switch_repair, lighting]
+        windows: [{date: 2026-10-07}]
+        address: "5 Marin"
+        zip: "07302"
+
+  - id: amb-035
+    split: dev
+    title: Date written as 10/8
+    customer:
+      opening: "available 10/8? need a plumber for a slow tub drain"
+      persona:
+        name: Nate Fox
+        situation: The bathtub drains slowly.
+        goal: Book a drain clearing on October 8.
+        facts: {name: Nate Fox, address: "45 Newark St, Hoboken", zip: "07030"}
+        availability: October 8, any time.
+        style: short, uses numbers for dates
+    expect:
+      bookings:
+        service: [drain_clog]
+        windows: [{date: 2026-10-08}]
+        address: "45 Newark"
+        zip: "07030"

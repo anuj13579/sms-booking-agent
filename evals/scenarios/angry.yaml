@@ -1,0 +1,289 @@
+# Upset customers: complaints about no-shows, past work, or the business itself go to the owner
+# (upset_customer or human_requested, handoff). Three scenarios are only mildly annoyed about a
+# broken appliance, not at the business; those should be booked normally, so this category also
+# measures over-escalation.
+category: angry
+defaults:
+  clock: 2026-10-06T09:15  # Tuesday
+  customer:
+    kind: simulated
+    max_turns: 6
+  expect:
+    escalate: [upset_customer, human_requested]
+    bookings: {new: 0}
+
+scenarios:
+  - id: an-001
+    split: dev
+    title: Technician never showed yesterday
+    customer:
+      opening: "Your technician was supposed to come yesterday between 1 and 3 and NEVER showed up. Nobody called. I took the afternoon off work for this."
+      persona:
+        name: Karen Doyle
+        situation: A visit yesterday was a no-show. You lost half a day of pay.
+        goal: Have the owner deal with this personally. You're angry.
+        facts: {name: Karen Doyle, address: "44 Garden St, Hoboken", zip: "07030"}
+        style: angry, long sentences, some capitals
+        notes: Don't accept a new booking from a machine; you want the owner.
+
+  - id: an-002
+    split: dev
+    title: Tech left a mess
+    customer:
+      opening: "The guy you sent last week left drywall dust all over my kitchen and didn't even clean up. Unacceptable."
+      persona:
+        name: Brian Leary
+        situation: Last week's electrician left a mess after replacing a switch.
+        goal: Complain and get someone to make it right.
+        facts: {name: Brian Leary, address: "19 Bright St, Jersey City", zip: "07302"}
+        style: curt and annoyed
+
+  - id: an-003
+    split: test
+    title: ALL CAPS, where is the tech
+    customer:
+      opening: "WHERE IS YOUR TECH?? I'VE BEEN WAITING ALL MORNING"
+      persona:
+        name: Gloria Vance
+        situation: You believe someone was coming this morning and no one came.
+        goal: Find out what's going on and talk to a real person.
+        facts: {name: Gloria Vance, address: "300 Ogden Ave, Jersey City", zip: "07307"}
+        style: all caps, furious
+
+  - id: an-004
+    split: dev
+    title: Demands the manager
+    customer:
+      opening: "I want to talk to the manager. Now."
+      persona:
+        name: Phil Barton
+        situation: You were unhappy with a quote you got by phone last week.
+        goal: Speak to the owner or a manager.
+        facts: {name: Phil Barton, address: "71 Hudson St, Hoboken", zip: "07030"}
+        style: blunt
+
+  - id: an-005
+    split: dev
+    title: Threatens a bad review
+    customer:
+      opening: "Your plumber fixed my toilet three days ago and it's running again. If this isn't fixed for free I'm leaving a 1-star review everywhere."
+      persona:
+        name: Sandra Ok
+        situation: A toilet repair three days ago didn't hold.
+        goal: Get it fixed again for free, from someone with authority.
+        facts: {name: Sandra Ok, address: "8 Erie St, Jersey City", zip: "07302"}
+        style: angry, threatening
+
+  - id: an-006
+    split: test
+    title: Says they were overcharged
+    customer:
+      opening: "I was charged way more than I was told on the phone for the AC repair. I want this sorted out."
+      persona:
+        name: Martin Cole
+        situation: You think last month's AC repair bill was too high.
+        goal: Dispute the bill with the owner.
+        facts: {name: Martin Cole, address: "650 Washington St, Hoboken", zip: "07030"}
+        style: firm, irritated
+    expect:
+      escalate: [upset_customer, human_requested, price_quote]
+
+  - id: an-007
+    split: dev
+    title: Swearing
+    customer:
+      opening: "this is the second damn time my heat has crapped out after you guys 'fixed' it. what the hell"
+      persona:
+        name: Rick Shaw
+        situation: The furnace failed again a week after a repair. It's 64F inside; uncomfortable, not dangerous.
+        goal: Get the owner to send someone back for free.
+        facts: {name: Rick Shaw, address: "112 Sherman Ave, Jersey City", zip: "07307"}
+        style: swears mildly, lowercase, angry
+
+  - id: an-008
+    split: dev
+    title: Third repair on the same AC
+    customer:
+      opening: "This is the THIRD time your company has 'fixed' my AC this summer. It's blowing warm again. I'm done."
+      persona:
+        name: Diane Fox
+        situation: The AC has been repaired twice and failed again.
+        goal: Talk to the owner about a refund or a proper fix.
+        facts: {name: Diane Fox, address: "27 Ninth St, Hoboken", zip: "07030"}
+        style: exasperated
+
+  - id: an-009
+    split: test
+    title: Annoyed at the AC, not the business; books
+    customer:
+      opening: "ugh my AC died again, of course in a heat wave. can someone come tomorrow?"
+      persona:
+        name: Jenny Ross
+        situation: Your old AC unit stopped cooling. You've never used this company before.
+        goal: Book an AC repair tomorrow.
+        facts: {name: Jenny Ross, address: "93 Grand St, Hoboken", zip: "07030"}
+        availability: Tomorrow (Wednesday), any time.
+        style: grumbly but friendly toward the business
+    expect:
+      escalate: []
+      bookings:
+        new: 1
+        service: [ac_repair]
+        windows: [{date: 2026-10-07}]
+
+  - id: an-010
+    split: dev
+    title: Frustrated with the toilet, books
+    customer:
+      opening: "honestly so fed up with this toilet, it clogs every week. can a plumber look at it friday?"
+      persona:
+        name: Marco Bianchi
+        situation: Your toilet clogs often. First time contacting this company.
+        goal: Book a plumber Friday.
+        facts: {name: Marco Bianchi, address: "40 Bergen Ave, Jersey City", zip: "07305"}
+        availability: Friday (October 9), any time.
+        style: frustrated with the toilet, polite to the business
+    expect:
+      escalate: []
+      bookings:
+        new: 1
+        service: [toilet_repair, drain_clog]
+        windows: [{date: 2026-10-09}]
+
+  - id: an-011
+    split: dev
+    title: Sarcastic complaint
+    customer:
+      opening: "Wow, great job on the 'repair' last week. Water heater's leaking again. Really impressive."
+      persona:
+        name: Owen Hart
+        situation: A water heater repair last week; it leaks again (a small puddle, no gas smell).
+        goal: Get the owner to send someone back and acknowledge the problem.
+        facts: {name: Owen Hart, address: "15 Paterson St, Jersey City", zip: "07307"}
+        style: sarcastic
+
+  - id: an-012
+    split: test
+    title: Nobody called back
+    customer:
+      opening: "I texted on Friday asking for someone to call me and nobody ever did. Is anyone actually working there?"
+      persona:
+        name: Laura Kim
+        situation: You asked for a callback last week and never got one.
+        goal: Get a person to call you.
+        facts: {name: Laura Kim, address: "203 Willow Ave, Hoboken", zip: "07030"}
+        style: annoyed
+
+  - id: an-013
+    split: dev
+    title: Two-hour window is ridiculous
+    fixture:
+      customer: {name: Neil Grant, address: "48 Sixth St, Hoboken", zip: "07030"}
+      bookings:
+        - {label: b1, service: lighting, start: 2026-10-08T13:00, problem: Light install}
+    customer:
+      opening: "A two hour window is ridiculous. I need an exact time or I'm taking my business elsewhere."
+      persona:
+        name: Neil Grant
+        situation: You have a light install Thursday 1-3pm and hate waiting.
+        goal: Get an exact arrival time, from a person if necessary.
+        facts: {name: Neil Grant}
+        style: demanding
+    expect:
+      existing: {b1: unchanged}
+
+  - id: an-014
+    split: dev
+    title: Damage from a previous visit
+    customer:
+      opening: "After your plumber worked on my upstairs bathroom there's a water stain on my ceiling below. Who is paying for this?"
+      persona:
+        name: Beth Morales
+        situation: A ceiling stain appeared after last week's plumbing visit. It's dry now; not leaking.
+        goal: Have the owner take responsibility.
+        facts: {name: Beth Morales, address: "88 Clinton St, Hoboken", zip: "07030"}
+        style: upset, formal
+
+  - id: an-015
+    split: test
+    title: Asks for Dana by name
+    customer:
+      opening: "Let me speak to Dana please. This is about the job at my house last week, I'm not happy."
+      persona:
+        name: Victor Lin
+        situation: You're unhappy with last week's AC install estimate visit.
+        goal: Speak to Dana.
+        facts: {name: Victor Lin, address: "22 Hudson Pl, Hoboken", zip: "07030"}
+        style: clipped, unhappy
+
+  - id: an-016
+    split: dev
+    title: Wants a real person, not a bot
+    customer:
+      opening: "Am I talking to a robot? I want a real person."
+      persona:
+        name: Ruth Adams
+        situation: You need a plumber but you don't trust automated texting.
+        goal: Talk to a human.
+        facts: {name: Ruth Adams, address: "5 Second St, Hoboken", zip: "07030"}
+        style: suspicious, short
+        notes: Refuse to give booking details to the automated assistant.
+
+  - id: an-017
+    split: dev
+    title: Mildly annoyed with typos, books
+    customer:
+      opening: "argh, kitchen outlet stoped working agian, can i get someone thurs?"
+      persona:
+        name: Kyle Moss
+        situation: A kitchen outlet stopped working; no burning smell. First time using this company.
+        goal: Book an electrician Thursday.
+        facts: {name: Kyle Moss, address: "60 Sussex St, Jersey City", zip: "07302"}
+        availability: Thursday (October 8), any time.
+        style: typos, mildly annoyed at the outlet
+    expect:
+      escalate: []
+      bookings:
+        new: 1
+        service: [outlet_switch_repair, power_issue]
+        windows: [{date: 2026-10-08}]
+
+  - id: an-018
+    split: test
+    title: Threatens legal action
+    customer:
+      opening: "Your technician damaged my hardwood floor dragging equipment. I'm talking to my lawyer unless the owner calls me today."
+      persona:
+        name: Graham Wells
+        situation: Your floor was scratched during last week's furnace visit.
+        goal: Get the owner to call you today.
+        facts: {name: Graham Wells, address: "1 Newport Pkwy, Jersey City", zip: "07310"}
+        style: cold, formal, threatening
+
+  - id: an-019
+    split: dev
+    title: Rude about the price of the last job
+    customer:
+      opening: "$400 to replace a switch?? are you kidding me. you people are crooks"
+      persona:
+        name: Al Ferris
+        situation: You think last week's bill was a rip-off.
+        goal: Complain and get money back.
+        facts: {name: Al Ferris, address: "9 Hamilton Ave, Weehawken", zip: "07086"}
+        style: rude, lowercase
+    expect:
+      escalate: [upset_customer, human_requested, price_quote]
+
+  - id: an-020
+    split: dev
+    title: Upset about being double-charged
+    customer:
+      opening: "I've been charged twice for the same visit on my card. I need this fixed immediately."
+      persona:
+        name: Paula Stein
+        situation: Your card shows two charges for one visit.
+        goal: Get the duplicate charge refunded.
+        facts: {name: Paula Stein, address: "430 Monmouth St, Jersey City", zip: "07302"}
+        style: urgent, irritated
+    expect:
+      escalate: [upset_customer, human_requested, price_quote]

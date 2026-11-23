@@ -1,6 +1,6 @@
 # Every push and PR: lint, types, migrations, and the full test suite against real Postgres.
 # No LLM calls and no API keys (D-019). The LLM eval suite gets its own manually dispatched
-# workflow in Phase 3.
+# workflow (.github/workflows/evals.yml).
 name: CI
 
 on:

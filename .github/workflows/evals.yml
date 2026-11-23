@@ -1,0 +1,101 @@
+# The LLM eval suite against the real model. Manual only (D-019): it costs money and its results
+# are statistical, so it runs when there is a change worth measuring, never on push. Needs the
+# DEEPSEEK_API_KEY repository secret. Results are uploaded as an artifact; summaries worth
+# keeping go in RESULTS.md by hand.
+name: Evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      split:
+        description: "dev, test (milestones only), or all"
+        type: choice
+        options: [dev, test, all]
+        default: dev
+      milestone:
+        description: "Required for the test split: what milestone this run marks"
+        type: string
+        default: ""
+      category:
+        description: "Optional single category, e.g. clear_emergency"
+        type: string
+        default: ""
+      model:
+        description: "Agent model"
+        type: choice
+        options: [deepseek-flash, deepseek-v4-pro]
+        default: deepseek-flash
+      repeat:
+        description: "Runs per scenario (k)"
+        type: number
+        default: 1
+      max_cost:
+        description: "Stop starting new runs past this spend (USD)"
+        type: string
+        default: "2.00"
+      judge:
+        description: "Run the LLM judge"
+        type: boolean
+        default: true
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: booking
+          POSTGRES_PASSWORD: booking
+          POSTGRES_DB: booking_agent_eval
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U booking -d booking_agent_eval"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      EVAL_DATABASE_URL: postgresql+asyncpg://booking:booking@localhost:5432/booking_agent_eval
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Validate scenarios
+        run: uv run python -m evals validate
+
+      - name: Run evals
+        env:
+          SPLIT: ${{ inputs.split }}
+          MILESTONE: ${{ inputs.milestone }}
+          CATEGORY: ${{ inputs.category }}
+          MODEL: ${{ inputs.model }}
+          REPEAT: ${{ inputs.repeat }}
+          MAX_COST: ${{ inputs.max_cost }}
+          JUDGE: ${{ inputs.judge }}
+        run: |
+          args=(run --split "$SPLIT" --model "$MODEL" --repeat "$REPEAT" --max-cost "$MAX_COST" --name ci)
+          if [ -n "$MILESTONE" ]; then args+=(--milestone "$MILESTONE"); fi
+          if [ -n "$CATEGORY" ]; then args+=(--category "$CATEGORY"); fi
+          if [ "$JUDGE" != "true" ]; then args+=(--no-judge); fi
+          uv run python -m evals "${args[@]}"
+
+      - name: Add the report to the job summary
+        if: always()
+        run: cat evals/runs/*/report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: eval-run
+          path: evals/runs/
+          if-no-files-found: ignore

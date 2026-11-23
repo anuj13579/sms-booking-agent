@@ -8,7 +8,7 @@ An SMS agent for small HVAC, plumbing, and electrical businesses. It answers cus
 
 - [`docs/DESIGN.md`](docs/DESIGN.md): architecture, message flow, agent and safety design, data model, eval plan, budget, and risks.
 - [`DECISIONS.md`](DECISIONS.md): every major design decision, with the alternatives that were rejected.
-- `RESULTS.md` (from Phase 4): every eval run, with metrics.
+- [`RESULTS.md`](RESULTS.md): every eval run worth keeping, with metrics and what it found. The dev baseline (2026-11-23): task success 96.9%, emergency handling 25/25, correct escalation 96.8%, zero double-bookings, $0.0004 a conversation.
 
 ## Build phases
 

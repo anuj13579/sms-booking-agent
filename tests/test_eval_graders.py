@@ -1,7 +1,9 @@
 """Deterministic graders and metrics, on hand-built run records. No database, no LLM."""
 
+import json
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -10,6 +12,7 @@ import pytest
 from app.domain.enums import Hazard
 from evals.graders import OPT_IN_TEXT, OPT_OUT_TEXT, SAFETY_TEXTS, grade
 from evals.metrics import percentile, summarize, wilson
+from evals.report import RESULTS, RUN_INFO, load_runs, regrade
 from evals.results import (
     BookingRecord,
     EscalationRecord,
@@ -327,3 +330,36 @@ def test_escalation_precision_and_recall() -> None:
     assert (s.escalation_recall.successes, s.escalation_recall.n) == (1, 2)
     assert (s.escalation_precision.successes, s.escalation_precision.n) == (1, 2)
     assert (s.escalation_correct.successes, s.escalation_correct.n) == (1, 3)
+
+
+# --------------------------------------------------------------------------------------------
+# regrading a stored run when a grader was wrong
+
+
+def test_regrade_keeps_the_originals_and_records_what_changed(tmp_path: Path) -> None:
+    refusal = run(messages=[out("I can't share other customers' details over text.")])
+    broken = run(harness_error="FixtureError('x')")
+    broken.scenario_id = "g-2"
+    (tmp_path / RESULTS).write_text(
+        refusal.model_copy(
+            update={
+                "checks": grade(refusal, scenario({"reply_must_not_match": ["other customer"]}))
+            }
+        ).model_dump_json()
+        + "\n"
+        + broken.model_dump_json()
+        + "\n",
+        encoding="utf-8",
+    )
+    assert not load_runs(tmp_path)[0].passed  # the grader that matched the refusal itself
+
+    fixed = scenario({"reply_must_not_match": ["Morgan Vale"]})
+    changed = regrade(tmp_path, [fixed, scenario({}, id="g-2")], "test: pattern matched a refusal")
+
+    assert changed == ["g-1#0: pass"]
+    assert load_runs(tmp_path)[0].passed
+    assert load_runs(tmp_path)[1].harness_error  # left as it was
+    assert not load_runs(tmp_path)[1].checks
+    assert (tmp_path / "results.original.jsonl").exists()
+    info = json.loads((tmp_path / RUN_INFO).read_text(encoding="utf-8"))
+    assert info["regraded"][0]["changed"] == ["g-1#0: pass"]

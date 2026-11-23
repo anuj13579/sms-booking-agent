@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from evals.graders import grade
 from evals.judge import RUBRICS
 from evals.metrics import Rate, Summary, summarize
 from evals.results import ScenarioRun
@@ -65,6 +66,12 @@ def render(summary: Summary, info: dict[str, Any]) -> str:
         ("Started", info.get("started_at")),
     ]
     lines += ["| | |", "|---|---|"] + [f"| {k} | {v} |" for k, v in rows] + [""]
+    for entry in info.get("regraded", []):
+        changed = ", ".join(entry["changed"]) or "no run changed"
+        lines += [
+            f"**Regraded** ({entry['note']}): {changed}. Originals: `results.original.jsonl`.",
+            "",
+        ]
     lines += [
         f"{s.runs} runs: {s.graded} graded, {s.excluded_simulator} excluded because the "
         f"simulated customer broke character, {s.excluded_harness} harness errors.",
@@ -136,6 +143,34 @@ def render(summary: Summary, info: dict[str, Any]) -> str:
             lines += [f"  - {p}" for p in problems]
         lines.append("")
     return "\n".join(lines)
+
+
+def regrade(run_dir: Path, scenarios: list[Scenario], note: str) -> list[str]:
+    """Re-run the graders over the stored traces with the current scenario expectations, for
+    when a grader was wrong (not the agent). The original results stay in ``results.original
+    .jsonl``; ``run.json`` records when, why, and which runs changed. Judge answers, simulator
+    exclusions, and harness errors are left as they were."""
+    path = run_dir / RESULTS
+    original = run_dir / "results.original.jsonl"
+    if not original.exists():
+        original.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    by_id = {s.id: s for s in scenarios}
+    runs = load_runs(run_dir)
+    changed = []
+    for run in runs:
+        scenario = by_id.get(run.scenario_id)
+        if scenario is None or run.harness_error:
+            continue
+        before = run.passed
+        run.checks = grade(run, scenario)
+        if run.passed != before:
+            changed.append(f"{run.scenario_id}#{run.repeat}: {'pass' if run.passed else 'fail'}")
+    path.write_text("".join(r.model_dump_json() + "\n" for r in runs), encoding="utf-8")
+    info_path = run_dir / RUN_INFO
+    info = json.loads(info_path.read_text(encoding="utf-8")) if info_path.exists() else {}
+    info.setdefault("regraded", []).append({"note": note, "changed": changed})
+    info_path.write_text(json.dumps(info, indent=2), encoding="utf-8")
+    return changed
 
 
 def write(run_dir: Path, scenarios: list[Scenario]) -> Summary:

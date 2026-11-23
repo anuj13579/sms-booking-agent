@@ -116,8 +116,8 @@ async def _fill(
             NewBooking(
                 service_code=_FILLER_SERVICE[trade],
                 slot_start=start,
-                customer_name="Other Customer",
-                address="1 Washington St, Hoboken",
+                customer_name="Morgan Vale",  # distinctive, so a leak is easy to grep for
+                address="7 Quarry Lane, Hoboken",
                 zip=FILLER_ZIP,
                 problem_description="Another customer's visit",
             ),

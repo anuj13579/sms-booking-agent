@@ -312,7 +312,17 @@ def print_headline(s: Summary) -> None:
 
 def cmd_report(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir)
-    summary = report.write(run_dir, load_all())
+    scenarios = load_all()
+    if args.regrade:
+        if not args.note:
+            print("--regrade needs --note saying why (which grader was wrong).")
+            return 2
+        note = (
+            f"{datetime.now(UTC):%Y-%m-%d} at {_git('rev-parse', '--short', 'HEAD')}: {args.note}"
+        )
+        changed = report.regrade(run_dir, scenarios, note)
+        print(f"Regraded: {', '.join(changed) or 'no run changed'}")
+    summary = report.write(run_dir, scenarios)
     print_headline(summary)
     print(f"Report: {run_dir / report.REPORT}")
     return 0
@@ -426,6 +436,10 @@ def parser() -> argparse.ArgumentParser:
 
     rep = sub.add_parser("report", help="rebuild summary.json and report.md for a run")
     rep.add_argument("run_dir")
+    rep.add_argument(
+        "--regrade", action="store_true", help="re-grade stored traces with current expectations"
+    )
+    rep.add_argument("--note", help="why the regrade (required with --regrade)")
 
     label = sub.add_parser("label", help="sample transcripts for human labels")
     label.add_argument("run_dir")

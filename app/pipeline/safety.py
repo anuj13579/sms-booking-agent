@@ -154,17 +154,76 @@ def _without_negated_gas(text: str) -> str:
     return _NO_GAS.sub(" ", text)
 
 
+# D-049: the same idea for electrical and flooding. Only exact negations go: the negator and the
+# hazard word separated by whitespace (so "No! Sparks everywhere" still fires), optionally
+# listing more hazard words ("no sparks or smoke"), and not followed by "anymore", "now", or
+# "yet". CO alarms and "no heat" are deliberately left alone.
+_ELEC_ITEM = (
+    r"(?:sparks?|sparking|smok(?:e|ing|y)|burning(?:\s+smell)?|burnt|scorch\w*(?:\s+marks?)?|"
+    r"flames?|fire|melt(?:ed|ing)?)"
+)
+_FLOOD_ITEM = r"(?:flood\w*|burst\w*)"
+_NEGATOR = r"(?:no|not|isn'?t|wasn'?t|aren'?t|weren'?t|without|nothing|didn'?t|doesn'?t|hasn'?t)"
+
+
+def _negated(item: str) -> str:
+    return (
+        rf"\b{_NEGATOR}\s+(?:\w+\s+)?{item}\b(?:\s*(?:,|or|and|nor)\s+(?:any\s+)?{item}\b)*{_STILL}"
+    )
+
+
+_NO_OTHER_HAZARD = _rx(
+    _negated(_ELEC_ITEM),
+    _negated(_FLOOD_ITEM),
+    rf"\b(?:doesn'?t|does\s+not|didn'?t|isn'?t|not)\s+(?:\w+\s+)?(?:smell\w*|look\w*)\s+"
+    rf"(?:like\s+)?(?:burning|smoke|burnt)\b{_STILL}",
+)
+
+# A sentence about something past and dealt with ("we smelled burning last month and an
+# electrician fixed it") isn't a report, unless it also says it's happening again or now.
+_PAST = _rx(
+    r"\blast\s+(?:week|month|year|winter|summer|spring|fall|time)\b",
+    r"\b(?:\d+|a\s+few|a\s+couple(?:\s+of)?|several|two|three)\s+(?:days?|weeks?|months?|years?)"
+    r"\s+ago\b",
+    r"\byears?\s+ago\b|\ba\s+while\s+(?:back|ago)\b|\bin\s+the\s+past\b|\bpreviously\b",
+)
+_RESOLVED = _rx(
+    r"\b(?:fixed|repaired|resolved|replaced|sorted(?:\s+out)?|cleaned\s+up)\b",
+    r"\btaken\s+care\s+of\b|\bbeen\s+fine\b|\bno\s+(?:problems?|issues?)\s+since\b",
+)
+_PRESENT = _rx(
+    r"\b(?:again|currently|still|today|tonight|started|starting|keeps?|right\s+now|just\s+now)\b",
+    r"\bthis\s+(?:morning|afternoon|evening)\b",
+    r"(?<!fine\s)(?<!good\s)(?<!okay\s)(?<!ok\s)\bnow\b",
+)
+_SENTENCE = re.compile(r"(?<=[.!?;])\s+|\n+")
+
+
+def _without_resolved_past(text: str) -> str:
+    return " ".join(
+        s
+        for s in _SENTENCE.split(text)
+        if not (_PAST.search(s) and _RESOLVED.search(s) and not _PRESENT.search(s))
+    )
+
+
+def _current(text: str) -> str:
+    """The text with plain negations and past, resolved sentences removed (D-049)."""
+    return _NO_OTHER_HAZARD.sub(" ", _without_resolved_past(text))
+
+
 def detect_hazards(text: str) -> list[Hazard]:
     """All hazards the text suggests, most severe first (``Hazard`` declaration order)."""
     text = _normalise(text)
+    current = _current(text)
     found = []
     if _GAS.search(_without_negated_gas(text)):
         found.append(Hazard.GAS)
     if _CO.search(text) and (_CO_ACTIVE.search(text) or not _CO_UPKEEP.search(text)):
         found.append(Hazard.CO)
-    if _ELECTRICAL.search(text):
+    if _ELECTRICAL.search(current):
         found.append(Hazard.ELECTRICAL)
-    if _FLOODING.search(text):
+    if _FLOODING.search(current):
         found.append(Hazard.FLOODING)
     if _NO_HEAT.search(text) and _is_cold(text):
         found.append(Hazard.NO_HEAT)

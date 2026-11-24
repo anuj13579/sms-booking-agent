@@ -73,7 +73,12 @@ MUST_NOT_DETECT = [
 # Known false positives, kept visible on purpose (D-004): the templates are conditional, so the
 # customer gets sensible advice, and the look-alike eval category measures how often this bites.
 KNOWN_FALSE_POSITIVES = [
-    ("smelled burning last month, electrician fixed it", Hazard.ELECTRICAL),
+    # D-049: "now" keeps a past, resolved sentence counting, because it can't be told apart from
+    # "it's happening now". Erring towards a safety text is the right side.
+    (
+        "we had a burst pipe two years ago, it was repaired, now I want the water heater checked",
+        Hazard.FLOODING,
+    ),
     # "anymore" may mean it smelled of gas until just now, so this negation still fires (D-043).
     ("no gas smell anymore, thanks", Hazard.GAS),
 ]
@@ -192,4 +197,48 @@ def test_routine_fire_and_detector_talk_is_not_an_emergency(text: str, hazard: H
 
 @pytest.mark.parametrize(("text", "hazard"), STILL_AN_EMERGENCY)
 def test_real_fires_and_co_alarms_still_fire(text: str, hazard: Hazard) -> None:
+    assert hazard in detect_hazards(text)
+
+
+# D-049: plain negations and past, resolved events for electrical and flooding. From the held-out
+# test split at the Phase 4 milestone (la-003, la-006, la-012), generalised rather than copied.
+NOT_HAPPENING = [
+    ("The basement didn't flood but I want the sump pump checked", Hazard.FLOODING),
+    ("it's not flooding, just a steady drip", Hazard.FLOODING),
+    ("no flooding, everything's dry", Hazard.FLOODING),
+    ("No sparks or smoke, just cold air", Hazard.ELECTRICAL),
+    ("no sparks, no smoke, nothing burning", Hazard.ELECTRICAL),
+    ("doesn't smell like burning", Hazard.ELECTRICAL),
+    ("it's not sparking or anything", Hazard.ELECTRICAL),
+    ("smelled burning last month, electrician fixed it", Hazard.ELECTRICAL),
+    (
+        "We smelled burning from an outlet last month and an electrician fixed it. "
+        "Now I'd like an extra outlet added.",
+        Hazard.ELECTRICAL,
+    ),
+]
+
+HAPPENING = [
+    ("No! Sparks everywhere", Hazard.ELECTRICAL),  # punctuation: not a negation
+    ("no, there's smoke coming from the outlet", Hazard.ELECTRICAL),
+    ("there's smoke, no sparks", Hazard.ELECTRICAL),
+    ("no flames but the outlet is smoking", Hazard.ELECTRICAL),
+    ("no sparks before but now it's sparking", Hazard.ELECTRICAL),
+    ("I'm not sure, but I think I see smoke", Hazard.ELECTRICAL),
+    ("the outlet sparked last week and it still smells like burning", Hazard.ELECTRICAL),
+    ("smelled burning last month, fixed, and it's happening again", Hazard.ELECTRICAL),
+    ("not flooding yet but water is rising fast and pouring in", Hazard.FLOODING),
+    ("not flooding anymore but it was an hour ago", Hazard.FLOODING),
+    ("It flooded last month and was fixed but it's flooding again now", Hazard.FLOODING),
+    ("hasn't flooded yet", Hazard.FLOODING),
+]
+
+
+@pytest.mark.parametrize(("text", "hazard"), NOT_HAPPENING)
+def test_a_hazard_that_is_not_happening_is_not_reported(text: str, hazard: Hazard) -> None:
+    assert hazard not in detect_hazards(text)
+
+
+@pytest.mark.parametrize(("text", "hazard"), HAPPENING)
+def test_negation_and_past_never_hide_a_current_hazard(text: str, hazard: Hazard) -> None:
     assert hazard in detect_hazards(text)

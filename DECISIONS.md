@@ -654,3 +654,18 @@ Each entry has the following fields:
   - *Checking every reply against the database.* Only replies that make the promise need the query.
 - **Why.** A promise of a callback is a commitment the owner has to keep. It may only be made when the owner has actually been told.
 - **Revisit if.** Legitimate replies get rewritten. For example, a promise made just after a handoff template, or one about something already escalated in an earlier conversation.
+
+## D-048 · Two more pre-filter narrowings: "won't fire up", and CO detectors mentioned for upkeep
+*2026-11-23 · Phase 4 · Accepted · Refines D-004*
+
+- **Context.** Two look-alikes failed in all three dev runs. "My furnace won't **fire** up" matched the bare `fire` pattern (`la-004`). "My **CO detector** chirps once a minute, I think it needs a new battery" matched the CO pattern, which fires on any detector mention (`la-005`). Each sent a safety text and handed a routine job to the owner. "Can you install a CO detector?" had been listed in the tests as a known false positive since Phase 1.
+- **Decision.**
+  - **Fire.** "Fire" no longer counts straight after a negation ("won't", "doesn't", "didn't", "can't", "not", "never", and so on) or in "to fire (it) up". "Caught fire", "on fire", "electrical fire", "flames", and every other mention of a fire still count, including "a fire up in the attic" and "won't fire and now there's smoke".
+  - **CO.** A detector or carbon monoxide mention is ignored only when the message is about upkeep (a battery, chirping every minute, installing, replacing, expired, a new one) **and** nothing in it suggests a real alarm or symptoms (going off, won't stop, still going, beeping fast, four beeps, headache, dizziness, nausea, drowsiness, confusion, a ppm reading). A mention with neither kind of word still fires ("my CO detector keeps beeping", "worried about carbon monoxide").
+  - The prompt (`system_v2`) gives the model the same line: detector upkeep, and a furnace that won't fire up in mild weather, are routine; a detector going off, or anyone with symptoms, is an emergency.
+  - It also tells the model that thermostats are HVAC work (`hvac_maintenance` to install or replace, `heating_repair` or `ac_repair` when one stops working), never an electrical service. `amb-031` had booked a thermostat as a light-fixture job. Offered windows go in one sentence, not one per line.
+- **Rejected.**
+  - *Dropping bare "fire" from the pre-filter.* "There's a fire in the basement" must never depend on the model.
+  - *Ignoring every CO detector mention without symptoms.* "My CO detector keeps beeping" with no other detail could be a real alarm. Only upkeep words, with no alarm words, make it routine.
+- **Why.** Both narrowings remove a phrasing whose whole meaning is routine, and keep anything that could be a real alarm. The rule from D-004 still holds: when in doubt, it fires.
+- **Revisit if.** A real CO alarm or fire is reported in upkeep or idiom words, for example "replaced the battery but it chirps every minute and I feel off". Then add the symptom or alarm word to the cues.

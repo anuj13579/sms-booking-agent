@@ -669,3 +669,19 @@ Each entry has the following fields:
   - *Ignoring every CO detector mention without symptoms.* "My CO detector keeps beeping" with no other detail could be a real alarm. Only upkeep words, with no alarm words, make it routine.
 - **Why.** Both narrowings remove a phrasing whose whole meaning is routine, and keep anything that could be a real alarm. The rule from D-004 still holds: when in doubt, it fires.
 - **Revisit if.** A real CO alarm or fire is reported in upkeep or idiom words, for example "replaced the battery but it chirps every minute and I feel off". Then add the symptom or alarm word to the cues.
+
+## D-049 · Negations and past, fixed events stop counting for electrical and flooding too
+*2026-11-24 · Phase 4 · Accepted · Extends D-043 · Owner decision*
+
+- **Context.** At the Phase 4 milestone, the held-out test split failed 3 of its 4 emergency look-alikes, against 0 of 11 on dev. The dev fixes had been narrow (one phrasing each). The general gap, that only gas understood "there is no gas smell", was still there for the other hazards: "the basement didn't flood" (`la-012`), "it's not flooding, just a steady drip" (`la-006`), "we smelled burning last month and an electrician fixed it" (`la-003`). The owner chose to extend the rule to all hazards.
+- **Decision.**
+  - **Negations.** For electrical and flooding, a negator followed directly by the hazard word is removed before matching: "no sparks or smoke", "not flooding", "didn't flood", "nothing burning", "doesn't smell like burning". The words must be separated by whitespace only, so "No! Sparks everywhere" still fires. A following "anymore", "now", or "yet" keeps it counting.
+  - **Past, resolved events.** A sentence with a past-time marker ("last month", "two years ago") **and** a resolution ("fixed", "repaired", "taken care of") is ignored, unless it also says the thing is current ("again", "still", "now", "today", "started"). "Now" is honoured even in "now I want the water heater checked", erring towards a safety text.
+  - **Not changed.** CO, where an alarm going off always counts, and "no heat", where the words are the hazard. Gas keeps D-043's negations only, with no past-tense rule: a fixed gas leak from last year still fires.
+  - The prompt tells the model the same: if the customer says a hazard isn't happening, or happened and was fixed, believe them.
+- **The test split is no longer fully held out for this.** The rule was designed from general phrasings, and the tests list 21 of them. But it was motivated by test-split failures, so `la-003`, `la-006`, and `la-012` can't measure it without bias any more. The Phase 4 milestone result (94.7%, before this change) stays the honest held-out number. The next milestone needs fresh look-alike scenarios that no change has seen.
+- **Rejected.**
+  - *Keeping recall-only for non-gas hazards.* 3 of 4 held-out look-alikes would keep paging the owner, and each costs the customer their booking.
+  - *Letting the model judge negation.* The pre-filter runs first precisely so a model mistake can't hide a hazard (D-003).
+- **Why.** The same reasoning as for gas. A sentence whose whole meaning is "this is not happening" isn't a report, and anything with doubt, a present-tense cue, or punctuation between the words still is.
+- **Revisit if.** A real hazard is missed through a negation or past-tense shape, or new look-alikes keep failing on phrasing these rules don't cover.

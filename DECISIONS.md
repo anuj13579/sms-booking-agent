@@ -575,7 +575,7 @@ Each entry has the following fields:
 - **Decision.**
   - Each scenario carries its split in its YAML. Validation checks every category is within one scenario of 70/30. Adding a scenario never silently moves another between splits.
   - `--split test` refuses to run without `--milestone NAME`, which is recorded in the run's metadata.
-  - Before a run, the CLI estimates its cost ($0.01 a conversation on Flash, from the DESIGN §8 estimate with its 2x margin) and refuses if that's over `--max-cost` (default $2, enough for the dev split at that estimate). During the run, no new conversation starts once actual spend reaches the cap.
+  - Before a run, the CLI estimates its cost ($0.01 a conversation on Flash at first, from DESIGN §8 with its 2x margin; $0.002 from 2026-11-24, once real runs showed the cost) and refuses if that's over `--max-cost` (default $2). During the run, no new conversation starts once actual spend reaches the cap.
   - Spend is reported in three parts (agent, simulated customer, judge), from the providers' own usage.
   - Every run records the model, temperature, thinking setting, prompt version, git commit and whether the tree was dirty, so a result can be tied to the exact code and prompt that produced it.
 - **Rejected.**
@@ -583,7 +583,7 @@ Each entry has the following fields:
   - *Assigning splits by rank within each category.* Adding one scenario reshuffles others.
   - *A confirmation prompt instead of a cap.* CI can't answer prompts.
 - **Why.** Overfitting to the test split and overspending are both prevented in code rather than by remembering to be careful.
-- **Revisit if.** The estimate is far from real spend. The first two 16-scenario runs (2026-11-22) spent about $0.0005 a conversation all-in, twenty times under it, but over short conversations (2.4 customer messages on average). A full dev run will show whether that holds before the estimate changes.
+- **Revisit if.** The estimate is far from real spend. The first two 16-scenario runs (2026-11-22) spent about $0.0005 a conversation all-in, twenty times under it, but over short conversations (2.4 customer messages on average). A full dev run will show whether that holds before the estimate changes. It held: five full runs (2026-11-23 and 24) cost $0.00062–0.00065 a conversation, so on 2026-11-24 the estimate became $0.002 for Flash and $0.006 for Pro, about 3x the observed cost. The live cap is unchanged.
 
 ## D-043 · Gas: a plain "no gas smell" is not a gas report; the model gets real-leak cues
 *2026-11-23 · Phase 4 · Accepted · Refines D-004 for gas only · Owner decision*

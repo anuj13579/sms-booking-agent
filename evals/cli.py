@@ -40,10 +40,14 @@ from evals.scenario import (
 ROOT = Path(__file__).resolve().parents[1]
 RUNS_DIR = ROOT / "evals" / "runs"
 LABELS_DIR = ROOT / "evals" / "labels"
-# Rough all-in cost of one conversation (agent + simulated customer + judge), from
-# scripts/estimate_eval_cost.py with its 2x safety margin. Only used to refuse runs that would
-# obviously blow the budget; the live spend check is what actually stops a run.
-ESTIMATE_PER_CONVERSATION = {"deepseek-flash": Decimal("0.01"), "deepseek-v4-pro": Decimal("0.03")}
+# Upper bound on the all-in cost of one conversation (agent + simulated customer + judge). Five
+# full Flash runs (2026-11-23/24) cost $0.00062-0.00065 each; this is about 3x that. Pro is 3x
+# Flash, as in DESIGN section 8. Only used to refuse runs that would obviously blow the budget;
+# the live spend check is what actually stops a run (D-042).
+ESTIMATE_PER_CONVERSATION = {
+    "deepseek-flash": Decimal("0.002"),
+    "deepseek-v4-pro": Decimal("0.006"),
+}
 
 
 # --------------------------------------------------------------------------------------------

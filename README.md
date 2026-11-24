@@ -89,7 +89,7 @@ Open http://127.0.0.1:8000 for the web-chat simulator. It is for development onl
 Eval runs need `DEEPSEEK_API_KEY` too. Each one wipes and rebuilds `booking_agent_eval` (or `EVAL_DATABASE_URL`) and writes its results, `summary.json`, and `report.md` to `evals/runs/<run id>/`:
 
 ```bash
-uv run python -m evals run --split dev                            # 174 conversations; refuses if the estimate tops --max-cost ($2)
+uv run python -m evals run --split dev                            # 174 conversations, about $0.11; capped at --max-cost ($2)
 uv run python -m evals run --category clear_emergency --repeat 3  # one category, three runs each
 uv run python -m evals run --id nb-001 --id la-004                # specific scenarios
 uv run python -m evals report evals/runs/<run id>                 # rebuild a report after changing metrics

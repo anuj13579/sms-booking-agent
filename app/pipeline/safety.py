@@ -50,6 +50,30 @@ _CO = _rx(
     r"\bmonoxide\b",
     r"\bco2?\W+(?:alarm|detector|monitor|sensor)s?\b",
 )
+# D-048: a detector mentioned only for upkeep ("chirps once a minute, needs a new battery",
+# "install a CO detector") is a routine job. It counts as upkeep only when nothing in the message
+# suggests a real alarm or symptoms: either kind of word below keeps it an emergency.
+_CO_UPKEEP = _rx(
+    r"\bbatter(?:y|ies)\b|\blow\W+batt\w*",
+    r"\bchirp\w*\W+(?:once|every)\b|\bonce\W+(?:a|an|every)\W+(?:minute|min|hour)\b",
+    r"\bevery\W+(?:\d+\W+|few\W+)?(?:minutes?|mins?|seconds?|secs?|hours?)\b",
+    r"\binstall\w*|\breplac\w*|\bexpired\b|\bend\W+of\W+(?:its\W+)?life\b|\bhard\W*wire\w*",
+    r"\bnew\W+(?:one|ones|detectors?|alarms?)\b|\bneeds?\W+(?:a\W+)?new\b|\bmount\w*",
+)
+_CO_ACTIVE = _rx(
+    r"\b(?:going|went|goes|gone)\W+off\b|\bsounding\b|\bblaring\b|\bscreaming\b",
+    r"\bwon'?t\W+stop\b|\bnon\W*stop\b|\bconstant\w*|\bcontinuous\w*",
+    r"\bbeep\w*\W+(?:fast|rapid\w*|loud\w*|like\W+crazy)\b|\b(?:four|4)\W+(?:beeps|times)\b",
+    r"\bstill\W+(?:going|beeping|sounding|chirping|on)\b",
+    r"\bheadache\w*|\bdizz\w*|\bnause\w*|\bvomit\w*|\blight\W*headed\b|\bfaint\w*|\bsick\b",
+    r"\bdrows\w*|\bconfus\w*|\bppm\b",
+)
+
+_NEGATIONS = (
+    "won't", "wont", "doesn't", "doesnt", "didn't", "didnt", "not", "never",
+    "can't", "cant", "cannot", "wouldn't", "wouldnt", "isn't",
+)  # fmt: skip
+_NOT_AFTER_NEGATION = "".join(rf"(?<!\b{word}\s)" for word in _NEGATIONS)
 
 _ELECTRICAL_PART = (
     r"(?:outlets?|plugs?|wires?|wiring|cords?|switch(?:es)?|panels?|breakers?|sockets?)"
@@ -63,7 +87,11 @@ _ELECTRICAL = _rx(
     rf"\bmelt\w*{_gap(3)}{_ELECTRICAL_PART}",
     rf"\b{_ELECTRICAL_PART}{_gap(3)}(?:melt\w*|scorch\w*|smok\w*|sizzl\w*)",
     r"\bscorch\w*",
-    r"\b(?:on\W+fire|caught\W+fire|electrical\W+fire|flames?|fire)\b",
+    r"\b(?:on\W+fire|caught\W+fire|electrical\W+fire|flames?)\b",
+    # D-048: "fire" as in a burner lighting is HVAC talk ("the furnace won't fire up"). It
+    # doesn't count right after a negation, or in "to fire (it) up". Everything else does,
+    # including "a fire up in the attic" and the alternatives above.
+    _NOT_AFTER_NEGATION + r"\bfire\b(?!(?<=\bto\sfire)\W+(?:\w+\W+){0,2}?up\b)",
     r"\belectrocut\w*|\b(?:got|getting|gets|get)\W+(?:a\W+)?shock(?:ed)?\b",
     r"\b(?:power|electric\w*)\W+lines?\W+(?:\w+\W+){0,2}?down\b|\bdowned\W+(?:power\W+)?lines?\b",
 )
@@ -132,7 +160,7 @@ def detect_hazards(text: str) -> list[Hazard]:
     found = []
     if _GAS.search(_without_negated_gas(text)):
         found.append(Hazard.GAS)
-    if _CO.search(text):
+    if _CO.search(text) and (_CO_ACTIVE.search(text) or not _CO_UPKEEP.search(text)):
         found.append(Hazard.CO)
     if _ELECTRICAL.search(text):
         found.append(Hazard.ELECTRICAL)

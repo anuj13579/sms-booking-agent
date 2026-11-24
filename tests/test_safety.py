@@ -74,7 +74,6 @@ MUST_NOT_DETECT = [
 # customer gets sensible advice, and the look-alike eval category measures how often this bites.
 KNOWN_FALSE_POSITIVES = [
     ("smelled burning last month, electrician fixed it", Hazard.ELECTRICAL),
-    ("can you install a CO detector?", Hazard.CO),
     # "anymore" may mean it smelled of gas until just now, so this negation still fires (D-043).
     ("no gas smell anymore, thanks", Hazard.GAS),
 ]
@@ -150,3 +149,47 @@ def test_hazards_come_back_most_severe_first() -> None:
 def test_matches_across_batched_messages() -> None:
     # Customers split thoughts across texts; the pipeline joins a batch with newlines.
     assert detect_hazards("i smell\ngas") == [Hazard.GAS]
+
+
+# D-048: "fire" as HVAC talk, and CO detectors mentioned only for upkeep. Both came up in the eval
+# (la-004: "my furnace won't fire up"; la-005: "my CO detector chirps once a minute, I think it
+# needs a new battery"), each handing a routine job to the owner with a safety text.
+ROUTINE = [
+    ("My furnace won't fire up for the first time this season", Hazard.ELECTRICAL),
+    ("the boiler doesn't fire", Hazard.ELECTRICAL),
+    ("it didn't fire at all this morning", Hazard.ELECTRICAL),
+    ("trying to fire up the furnace", Hazard.ELECTRICAL),
+    ("I need someone to fire it up for the season", Hazard.ELECTRICAL),
+    ("My CO detector chirps once a minute, I think it needs a new battery", Hazard.CO),
+    ("can you install a CO detector?", Hazard.CO),
+    ("need new carbon monoxide detectors installed", Hazard.CO),
+    ("CO alarm is expired, want to replace it", Hazard.CO),
+    ("my co detector says low battery", Hazard.CO),
+]
+
+# ...while every real fire and every sign of a real CO alarm still fires.
+STILL_AN_EMERGENCY = [
+    ("there's a fire in my outlet", Hazard.ELECTRICAL),
+    ("small fire up in the attic near the wiring", Hazard.ELECTRICAL),
+    ("the outlet caught fire", Hazard.ELECTRICAL),
+    ("I can't put the fire out", Hazard.ELECTRICAL),
+    ("the furnace won't fire and now there's smoke", Hazard.ELECTRICAL),
+    ("the furnace won't fire up, and there's a fire in the basement", Hazard.ELECTRICAL),
+    ("my CO detector keeps beeping", Hazard.CO),
+    ("worried about carbon monoxide from the furnace", Hazard.CO),
+    ("CO alarm went off, replaced the battery and it's still going off", Hazard.CO),
+    ("CO detector won't stop even with a new battery", Hazard.CO),
+    ("new CO detector keeps going off", Hazard.CO),
+    ("co detector chirping every minute and I have a headache", Hazard.CO),
+    ("CO detector beeping 4 times and stopping", Hazard.CO),
+]
+
+
+@pytest.mark.parametrize(("text", "hazard"), ROUTINE)
+def test_routine_fire_and_detector_talk_is_not_an_emergency(text: str, hazard: Hazard) -> None:
+    assert hazard not in detect_hazards(text)
+
+
+@pytest.mark.parametrize(("text", "hazard"), STILL_AN_EMERGENCY)
+def test_real_fires_and_co_alarms_still_fire(text: str, hazard: Hazard) -> None:
+    assert hazard in detect_hazards(text)

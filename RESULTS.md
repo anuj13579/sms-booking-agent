@@ -2,12 +2,17 @@
 
 Every eval run worth keeping, newest first, with what it measured and what it found. How the harness works is in [DESIGN §9](docs/DESIGN.md); what each metric counts is in [D-039](DECISIONS.md). Full run outputs (every transcript, tool call, and check) stay in `evals/runs/`, which is git-ignored, so this file is the record.
 
-**How to read the numbers.** Every rate comes with a Wilson 95% confidence interval. A target counts as met only when the whole interval clears it. When the interval spans the target, the verdict is "inconclusive", even at 100%. The dev split is for iteration. The held-out test split (76 scenarios) runs only at milestones (D-042) and hasn't been run yet.
+**How to read the numbers.** Every rate comes with a Wilson 95% confidence interval. A target counts as met only when the whole interval clears it. When the interval spans the target, the verdict is "inconclusive", even at 100%. The dev split is for iteration. The held-out test split (76 scenarios) runs only at milestones (D-042); it was first run at the end of Phase 4.
 
 ## Run log
 
 | Run | Date | Split | Model, prompt | Overall | Task success | Emergency | Escalation | Cost per conv. | Spend |
 |---|---|---|---|---|---|---|---|---|---|
+| d049-check2 | 2026-11-25 | dev, 174 | flash, `system_v2+fb8288a7` | (outage) | | | | $0.0005 | $0.10 |
+| d049-check | 2026-11-24 | dev, 174 | flash, `system_v2+fb8288a7` | (outage) | | | | $0.0004 | $0.10 |
+| [**phase4-milestone-test**](#2026-11-24-phase-4-milestone-held-out-test-split-and-3-repeats) | 2026-11-24 | **test, 76** | flash, `system_v2+2e9cd89a` | **94.7%** | 96.7% | 100% (10/10) | 100% | $0.0004 | $0.05 |
+| [phase4-dev-k3](#2026-11-24-phase-4-milestone-held-out-test-split-and-3-repeats) | 2026-11-24 | dev, 174 × 3 | flash, `system_v2+2e9cd89a` | 99.6% | 99.5% | 100% (75/75) | 100% | $0.0004 | $0.33 |
+| [phase4-round3](#2026-11-23-phase-4-round-3-fire-co-detectors-thermostats) | 2026-11-23 | dev, 174 | flash, `system_v2+2e9cd89a` | 100% | 100% | 100% (25/25) | 100% | $0.0004 | $0.11 |
 | [phase4-round2](#2026-11-23-phase-4-round-2-placeholders-follow-ups-gas-wording) | 2026-11-23 | dev, 174 | flash, `system_v2+cae7ab62` | 98.3%* | 100% | 100% (25/25) | 100% | $0.0004 | $0.11 |
 | [phase4-optout-scope-gas](#2026-11-23-phase-4-round-1-opt-out-out-of-scope-gas) | 2026-11-23 | dev, 174 | flash, `system_v2+2bf172d6` | 96.0% | 98.5% | 100% (25/25) | 98.1% | $0.0004 | $0.11 |
 | [dev-baseline](#2026-11-23-dev-baseline) | 2026-11-23 | dev, 174 | flash, `system_v1+9c60bae1` | 94.8% | 96.9% | 100% (25/25) | 96.8% | $0.0004 | $0.11 |
@@ -17,6 +22,88 @@ Every eval run worth keeping, newest first, with what it measured and what it fo
 \* Regraded after two grader fixes (see that run's section). As run, it was 97.1%.
 
 The two 16-scenario runs were harness checks, not measurements. The first found a harness bug: the judge excluded a scripted prompt-injection scenario as "out of character". It was fixed, and the run was repeated.
+
+---
+
+## Phase 4 summary
+
+| | Dev baseline | End of Phase 4, dev (3 repeats) | End of Phase 4, **held-out test** |
+|---|---|---|---|
+| Overall | 94.8% (165/174) | 99.6% (520/522, CI 98.6–99.9%) | **94.7% (72/76, CI 87.2–97.9%)** |
+| Task success | 96.9% | 99.5% (194/195) | 96.7% (29/30) |
+| Emergency handling | 100% (25/25) | 100% (75/75, CI 95.1–100%) | 100% (10/10) |
+| Correct escalation | 96.8% | 100% (477/477, CI 99.2–100%) | 100% (70/70) |
+| Look-alike false positives | 2/11 | 0/33 | **3/4** |
+| Double bookings | 0 | 0 | 0 |
+| Cost per conversation | $0.0004 | $0.0004 | $0.0004 |
+
+The gap between 99.6% on dev and 94.7% held-out is the overfitting the test split exists to show. Each dev fix targeted one phrasing ("won't fire up", a CO battery chirp), while the general gap (negation and past tense for hazards other than gas) was still there. D-049 addresses it, after the milestone, so the 94.7% stands as the Phase 4 held-out result.
+
+Against the targets in DESIGN §1: task success and correct escalation meet theirs on both splits. Double bookings stayed at zero in every run. Cost per conversation is $0.0004, 25 times under the $0.01 target. Emergency handling has never missed (110 of 110 across dev repeats and test), but its interval's low end (95.1%) is still under the 98% target, so that one stays "inconclusive".
+
+Phase 4 cost about $1.10 in eval runs.
+
+---
+
+## 2026-11-25 D-049 regression checks: not valid (network outages)
+
+Two dev runs after D-049 (`20261124-222931-phase4-d049-check`, `20261125-023244-phase4-d049-check2`, code `a6bc2c2`) were meant to confirm the change didn't break anything. Both hit network outages: the machine lost its connection to DeepSeek mid-run, and one conversation took over ten hours of wall time, so the machine slept.
+
+| | Check 1 | Check 2 |
+|---|---|---|
+| Runs excluded (simulator connection errors) | 11 | 27 |
+| Failures with an agent-side `llm_error` or `time_limit` | 13 of 13 | 17 of 18 |
+| Failures with no outage involved | 0 | 1 (`nb-032`, see below) |
+
+Every affected customer got the fixed fallback reply and the owner was paged, which is the designed failure path (D-031). Among runs that hit no outage, nothing failed that hadn't before, but these aren't clean measurements, so D-049 is **not yet confirmed on dev**.
+
+`nb-032`'s one real failure was the simulated customer again: it asked for "tomorrow afternoon", the agent booked Wednesday 1–3pm (which was tomorrow afternoon), and the customer insisted "tomorrow, not Wednesday". The agent then moved the booking to today, giving way to a confused customer instead of pointing out that Wednesday was tomorrow.
+
+What this exposed in the harness: a dropped connection counts as an agent failure (D-039), so an outage looks like a regression. Provider errors should be reported separately from agent quality.
+
+---
+
+## 2026-11-24 Phase 4 milestone: held-out test split and 3 repeats
+
+| | Test split milestone | Dev, 3 repeats |
+|---|---|---|
+| Run id | `20261124-212150-phase4-milestone-test` | `20261124-212606-phase4-dev-k3` |
+| Code | `14cd2b4`, clean tree, `--milestone phase-4` | `8523b09` (tree dirty only from the untracked labels file) |
+| Prompt | `system_v2+2e9cd89a` | `system_v2+2e9cd89a` |
+| Overall | 72/76 (94.7%, CI 87.2–97.9%) | 520/522 (99.6%, CI 98.6–99.9%) |
+| Task success | 29/30 (96.7%) | 194/195 (99.5%) |
+| Emergency handling | 10/10 | 75/75 (CI 95.1–100%) |
+| Correct escalation | 70/70 | 477/477 (CI 99.2–100%) |
+| Look-alike false positives | 3/4 | 0/33 |
+| Judge: one question at a time | 69/76 | 466/522 (89%) |
+| Spend | $0.05 | $0.33 |
+
+**Test split failures (4):**
+
+| Scenario | What happened |
+|---|---|
+| `la-003` | "We smelled burning from an outlet **last month** and an electrician fixed it" tripped the electrical pattern. |
+| `la-012` | "The basement **didn't flood**" tripped the flooding pattern. |
+| `la-006` | "Water everywhere on the counter lol" (a dripping faucet) tripped flooding, and so did the follow-up "it's not flooding". |
+| `rs-018` | "I think I need to cancel tomorrow's appointment": the agent cancelled at once. Asked to move it to Friday instead, it booked Friday as a new visit. The customer has the Friday visit, but the scenario expected the original to be moved. Left failing: changing a test-split expectation after seeing the result would bias the split. |
+
+The three look-alikes share one cause, which D-049 then addressed (owner decision). Because they motivated it, they no longer measure it without bias. The next milestone needs fresh look-alike scenarios.
+
+**Dev repeats:** the two failures (`amb-007`, `nb-032`, each failing 1 of 3) were the simulated customer accepting a window its persona ruled out. The agent booked what the customer chose. Break-character detection doesn't catch a customer contradicting its own availability, so these count as failures.
+
+---
+
+## 2026-11-23 Phase 4 round 3: fire, CO detectors, thermostats
+
+| | |
+|---|---|
+| Run id | `20261123-222553-phase4-round3` |
+| Code | the working tree on `6354787`, committed as `d147a32` and `0b65d42` (D-048) |
+| Prompt | `system_v2+2e9cd89a` |
+
+**What changed** (D-048): "fire" no longer counts after a negation or in "to fire it up". A CO detector mentioned only for upkeep is routine unless an alarm or symptom word appears. The prompt maps thermostats to HVAC and keeps offered windows on one line.
+
+**Result:** 174/174 (100%, CI 97.8–100%), task success 65/65, emergency handling 25/25, correct escalation 159/159, look-alike false positives 0/11, $0.11. All three targets fixed (`la-004`, `la-005`, `amb-031`), no new failures. As the milestone then showed, this 100% partly reflects tuning to dev.
 
 ---
 

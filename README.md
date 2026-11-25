@@ -2,13 +2,13 @@
 
 An SMS agent for small HVAC, plumbing, and electrical businesses. It answers customer texts, books real technician arrival windows, handles reschedules and cancellations, and hands off to the owner for emergencies, price questions, and anything it isn't sure about.
 
-**Status:** Phase 3 (the eval harness) built: 250 scenarios, deterministic graders, a simulated customer, an LLM judge, and confidence intervals on every rate. A first 16-scenario live check passed 15 of 16 for under two cents; the full baseline and the work on its failures are Phase 4.
+**Status:** Phases 0–4 done. On the 76 held-out test scenarios the agent passes **94.7%**: task success 96.7%, emergency handling 10/10, correct escalation 70/70, zero double-bookings, $0.0004 a conversation. Next is Phase 5, the public demo.
 
 ## Documents
 
 - [`docs/DESIGN.md`](docs/DESIGN.md): architecture, message flow, agent and safety design, data model, eval plan, budget, and risks.
 - [`DECISIONS.md`](DECISIONS.md): every major design decision, with the alternatives that were rejected.
-- [`RESULTS.md`](RESULTS.md): every eval run worth keeping, with metrics and what it found. The dev baseline (2026-11-23): task success 96.9%, emergency handling 25/25, correct escalation 96.8%, zero double-bookings, $0.0004 a conversation.
+- [`RESULTS.md`](RESULTS.md): every eval run worth keeping, with metrics, the failures, and what was done about them.
 
 ## Build phases
 
@@ -16,7 +16,7 @@ An SMS agent for small HVAC, plumbing, and electrical businesses. It answers cus
 1. Core domain, no LLM ✅
 2. Agent loop, plus the web-chat simulator ✅
 3. Eval harness ✅
-4. Iterate on eval results
+4. Iterate on eval results ✅
 5. Public demo: per-visitor sandboxes, the owner dashboard, and a Telegram bot
 6. Deployment
 7. Share the demo and write up
@@ -29,6 +29,26 @@ An SMS agent for small HVAC, plumbing, and electrical businesses. It answers cus
 - One React app holds the customer chat (with an "under the hood" panel for tool calls, tokens, and cost) and the owner dashboard.
 - A Telegram bot is a second way to chat. Its link connects the Telegram chat to the visitor's sandbox, so those conversations show up in the same dashboard.
 - Rate limits and a daily LLM spend cap are counted in Postgres.
+
+## What Phase 4 did
+
+Six rounds of measure, fix, and measure again on the dev split, then one run on the held-out test split. The details, run by run, are in [RESULTS.md](RESULTS.md).
+
+| | Dev baseline | End of Phase 4, dev (×3) | Held-out test |
+|---|---|---|---|
+| Overall | 94.8% | 99.6% | **94.7%** |
+| Task success | 96.9% | 99.5% | 96.7% |
+| Emergency handling | 25/25 | 75/75 | 10/10 |
+| Correct escalation | 96.8% | 100% | 100% |
+
+What the evals found, and what changed:
+- **"Can you take me off the schedule?"** unsubscribed a customer instead of cancelling their visit. Opt-out phrasing now has to name a list or the texts (D-045).
+- **The model "penciled in" bookings** with the address "Pending", and a repeat call kept the placeholder. `create_booking` now refuses placeholders, and a repeat applies corrected details (D-046).
+- **"I'll have Dana reach out"** was said without escalating, so the owner never knew. The output guard now rejects that promise unless something was escalated (D-047).
+- **Emergency false alarms** handed routine jobs to the owner: "no gas smell", "won't fire up", a CO detector chirping for a battery, "the basement didn't flood". The pre-filter now ignores plain negations and past, fixed events, and still fires on anything current or uncertain (D-043, D-048, D-049).
+- **Unrelated requests** (car AC, dishwashers) get a polite no instead of paging the owner (D-044, owner decision).
+
+The honest number is the held-out one. Dev reached 99.6% partly by fixing one phrasing at a time, and the test split's look-alikes showed the gap. Emergency handling has never missed (110 of 110), but its interval's low end (95.1%) hasn't yet cleared the 98% target.
 
 ## What Phase 3 built
 

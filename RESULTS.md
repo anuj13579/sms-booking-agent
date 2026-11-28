@@ -8,6 +8,7 @@ Every eval run worth keeping, newest first, with what it measured and what it fo
 
 | Run | Date | Split | Model, prompt | Overall | Task success | Emergency | Escalation | Cost per conv. | Spend |
 |---|---|---|---|---|---|---|---|---|---|
+| [d049-check3](#2026-11-28-d-049-confirmed-on-dev) | 2026-11-28 | dev, 174 | flash, `system_v2+fb8288a7` | 99.4% | 100% | 100% (25/25) | 100% | $0.0004 | $0.11 |
 | d049-check2 | 2026-11-25 | dev, 174 | flash, `system_v2+fb8288a7` | (outage) | | | | $0.0005 | $0.10 |
 | d049-check | 2026-11-24 | dev, 174 | flash, `system_v2+fb8288a7` | (outage) | | | | $0.0004 | $0.10 |
 | [**phase4-milestone-test**](#2026-11-24-phase-4-milestone-held-out-test-split-and-3-repeats) | 2026-11-24 | **test, 76** | flash, `system_v2+2e9cd89a` | **94.7%** | 96.7% | 100% (10/10) | 100% | $0.0004 | $0.05 |
@@ -45,6 +46,20 @@ Phase 4 cost about $1.10 in eval runs.
 
 ---
 
+## 2026-11-28 D-049 confirmed on dev
+
+| | |
+|---|---|
+| Run id | `20261128-001430-phase4-d049-check3` |
+| Code | `7d343cb` (tree dirty only from the untracked labels file), prompt `system_v2+fb8288a7` |
+| Outages | none. Provider turns answered in time: 487/487 (D-050). Longest conversation: 15 s. |
+
+**Result:** 173/174 (99.4%, CI 96.8–99.9%), task success 65/65, emergency handling 25/25, correct escalation 159/159, no double bookings, $0.11. D-049 caused no regression on dev.
+
+**The one failure, `la-015`, isn't D-049's.** A gas stove's igniter keeps clicking. The agent asked whether the customer smelled gas or heard hissing. The customer answered "No smell at all, no hissing. **Flame** lights fine." Gas correctly stayed quiet, but "flame" matched the electrical pattern, which fires on any mention of a flame. Earlier runs passed only because the simulated customer never said "flame". A burner's flame lighting normally is routine, so this goes on the next round's list, alongside "fire up" (D-048).
+
+---
+
 ## 2026-11-25 D-049 regression checks: not valid (network outages)
 
 Two dev runs after D-049 (`20261124-222931-phase4-d049-check`, `20261125-023244-phase4-d049-check2`, code `a6bc2c2`) were meant to confirm the change didn't break anything. Both hit network outages: the machine lost its connection to DeepSeek mid-run, and one conversation took over ten hours of wall time, so the machine slept.
@@ -59,7 +74,7 @@ Every affected customer got the fixed fallback reply and the owner was paged, wh
 
 `nb-032`'s one real failure was the simulated customer again: it asked for "tomorrow afternoon", the agent booked Wednesday 1–3pm (which was tomorrow afternoon), and the customer insisted "tomorrow, not Wednesday". The agent then moved the booking to today, giving way to a confused customer instead of pointing out that Wednesday was tomorrow.
 
-What this exposed in the harness: a dropped connection counts as an agent failure (D-039), so an outage looks like a regression. Provider errors should be reported separately from agent quality.
+What this exposed in the harness: a dropped connection counted as an agent failure (D-039), so an outage looked like a regression. D-050 now reports outages separately. Rebuilt with it, these two runs show 150/150 and 129/130 among runs the outages didn't touch.
 
 ---
 

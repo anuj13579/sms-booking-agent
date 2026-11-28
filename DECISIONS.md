@@ -685,3 +685,19 @@ Each entry has the following fields:
   - *Letting the model judge negation.* The pre-filter runs first precisely so a model mistake can't hide a hazard (D-003).
 - **Why.** The same reasoning as for gas. A sentence whose whole meaning is "this is not happening" isn't a report, and anything with doubt, a present-tense cue, or punctuation between the words still is.
 - **Revisit if.** A real hazard is missed through a negation or past-tense shape, or new look-alikes keep failing on phrasing these rules don't cover.
+
+## D-050 · Provider and network outages are reported apart from agent quality
+*2026-11-27 · Phase 4 · Accepted · Refines D-039*
+
+- **Context.** Two dev checks after D-049 were spoiled by outages. The machine lost its connection to DeepSeek mid-run, and in the second it slept, so one conversation took over ten hours. Under D-039, an agent turn ending in `llm_error` or `time_limit` failed `no_agent_failure`, and a simulator call that failed on the network was filed as "the simulator broke character". So an outage looked like a regression, with emergency handling dropping to 56%, when the agent hadn't decided anything badly.
+- **Decision.**
+  - A run is an **outage** when the simulated customer's LLM call failed, or any agent turn ended in `llm_error` or `time_limit`. Outages are excluded from every quality rate and counted on their own, the way simulator and harness failures are. `step_limit` and `guard_failed` stay agent failures: those are the agent's own doing.
+  - The report adds **provider turns answered in time**, over all agent turns, so reliability is still visible. It also lists the outage runs with the exact command to re-run them.
+  - The classification is computed from what a run already stores, so older results are classified correctly when their report is rebuilt. The judge isn't called on outage runs.
+  - During a run on Windows, the CLI asks the OS not to sleep, and releases the request when the run ends.
+- **Rejected.**
+  - *Counting outages as agent failures.* It measures the network, not the agent, and makes every outage look like a regression.
+  - *Dropping outage runs silently.* Reliability matters for a product that texts customers, so it gets its own number.
+  - *Retrying outage runs automatically.* It would hide how often the provider fails. The re-run command makes a retry one paste away.
+- **Why.** A number has to measure one thing. Agent quality and provider reliability are both worth knowing, but mixed together neither can be read.
+- **Revisit if.** Provider failures become common in production. Then the agent's retry and timeout settings (D-031) need work, not just the eval.

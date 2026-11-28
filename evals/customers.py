@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from app.agent.providers.base import LLMError, LLMProvider, Message
-from evals.results import Exchange
+from evals.results import SIM_CALL_FAILED, Exchange
 from evals.scenario import Persona, ScriptedCustomer, SimulatedCustomer
 
 DONE = "[DONE]"
@@ -37,6 +37,7 @@ class Customer(Protocol):
     calls: int
     cost_usd: Decimal
     broke: str | None
+    infra: str | None
     end_reason: str
 
     def opening(self) -> str: ...
@@ -52,6 +53,7 @@ class Scripted:
     calls: int = 0
     cost_usd: Decimal = Decimal(0)
     broke: str | None = None
+    infra: str | None = None
     end_reason: str = ""
 
     def opening(self) -> str:
@@ -116,6 +118,7 @@ class Simulated:
     calls: int = 0
     cost_usd: Decimal = Decimal(0)
     broke: str | None = None
+    infra: str | None = None  # the call itself failed: an outage, not the persona going wrong
     end_reason: str = ""
     _finish_next: bool = field(default=False, repr=False)
     _sent: list[str] = field(default_factory=list, repr=False)
@@ -150,7 +153,7 @@ class Simulated:
                 model=self.model, messages=self.messages(exchanges), tools=[]
             )
         except LLMError as exc:
-            self.broke = f"simulator call failed: {exc}"
+            self.infra = f"{SIM_CALL_FAILED}: {exc}"
             self.end_reason = "sim_error"
             return None
         self.calls += 1

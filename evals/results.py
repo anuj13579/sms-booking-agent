@@ -7,6 +7,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+# Agent turn outcomes that mean the provider failed (an error after the retry, or the turn's time
+# budget spent waiting on it), not that the agent decided badly.
+INFRA_OUTCOMES = frozenset({"llm_error", "time_limit"})
+SIM_CALL_FAILED = "simulator call failed"
+
 
 class _Record(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -95,6 +100,8 @@ class ScenarioRun(_Record):
     simulator_broke: str | None = None
     # Set when the harness itself failed (fixture, crash); also excluded, and reported.
     harness_error: str | None = None
+    # Set when the simulated customer's LLM call failed (network, provider). See ``outage``.
+    infra_error: str | None = None
 
     exchanges: list[Exchange] = []
     messages: list[MessageRecord] = []
@@ -119,8 +126,25 @@ class ScenarioRun(_Record):
         return bool(self.checks) and all(c.passed for c in self.checks)
 
     @property
+    def outage(self) -> str | None:
+        """Why this run says nothing about the agent's quality because the provider or the
+        network failed: the simulated customer's call failed, or an agent turn ended in an LLM
+        error or ran out of time. Computed from what the run stored, so older runs (whose
+        simulator failures were recorded as ``simulator_broke``) are classified too."""
+        if self.infra_error:
+            return self.infra_error
+        if self.simulator_broke and self.simulator_broke.startswith(SIM_CALL_FAILED):
+            return self.simulator_broke
+        failed = [t.outcome for t in self.turns if t.outcome in INFRA_OUTCOMES]
+        return f"agent turn ended in {failed[0]}" if failed else None
+
+    @property
     def excluded(self) -> bool:
-        return self.simulator_broke is not None or self.harness_error is not None
+        return (
+            self.simulator_broke is not None
+            or self.harness_error is not None
+            or self.outage is not None
+        )
 
     @property
     def agent_cost_usd(self) -> Decimal:

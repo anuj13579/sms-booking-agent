@@ -22,6 +22,7 @@ from app.agent.providers.openai_compat import OpenAICompatibleProvider
 from app.config import Settings, get_settings
 from app.db.session import make_engine, make_sessionmaker
 from evals import db, report
+from evals.awake import keep_awake
 from evals.graders import grade
 from evals.judge import RUBRICS, SIMULATOR_RUBRIC, Judge, render_transcript
 from evals.metrics import Summary
@@ -130,6 +131,8 @@ async def _preflight(provider: LLMProvider, model: str) -> str | None:
 def _status_line(index: int, total: int, run: ScenarioRun) -> str:
     if run.harness_error:
         status = "HARNESS ERROR " + run.harness_error.splitlines()[0][:100]
+    elif run.outage:
+        status = "EXCLUDED (outage) " + run.outage[:80]
     elif run.simulator_broke:
         status = "EXCLUDED (simulator) " + run.simulator_broke[:80]
     elif run.passed:
@@ -174,7 +177,7 @@ async def execute(plan: RunPlan) -> list[ScenarioRun]:
                 return
             run = await run_scenario(env, scenario, repeat)
             run.checks = grade(run, scenario)
-            if judge is not None and run.harness_error is None:
+            if judge is not None and run.harness_error is None and run.outage is None:
                 await judge.grade(run)
             async with lock:
                 spent += run.total_cost_usd
@@ -288,7 +291,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
         )
 
-    asyncio.run(go())
+    with keep_awake():
+        asyncio.run(go())
     info["finished_at"] = datetime.now(UTC).isoformat(timespec="seconds")
     (run_dir / report.RUN_INFO).write_text(json.dumps(info, indent=2), encoding="utf-8")
     summary = report.write(run_dir, scenarios)
@@ -306,8 +310,16 @@ def print_headline(s: Summary) -> None:
     mean = s.cost_per_conversation["mean"]
     print(f"Cost/conversation   {'n/a' if mean is None else f'${mean:.4f}'} (agent, mean)")
     print(f"Overall             {s.overall}")
-    if s.excluded_simulator or s.excluded_harness:
-        print(f"Excluded            {s.excluded_simulator} simulator, {s.excluded_harness} harness")
+    if s.excluded_simulator or s.excluded_harness or s.excluded_outage:
+        print(
+            f"Excluded            {s.excluded_outage} outage, {s.excluded_simulator} simulator, "
+            f"{s.excluded_harness} harness"
+        )
+    if s.outage_runs:
+        ids = sorted({run.split("#")[0] for run in s.outage_runs})
+        print(f"Provider turns      {s.provider_turns}")
+        print("Re-run the outage runs with:")
+        print("  python -m evals run " + " ".join(f"--id {i}" for i in ids))
 
 
 # --------------------------------------------------------------------------------------------

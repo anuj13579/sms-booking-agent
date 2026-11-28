@@ -1,6 +1,7 @@
 """Deterministic graders and metrics, on hand-built run records. No database, no LLM."""
 
 import json
+import sys
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -363,3 +364,60 @@ def test_regrade_keeps_the_originals_and_records_what_changed(tmp_path: Path) ->
     assert (tmp_path / "results.original.jsonl").exists()
     info = json.loads((tmp_path / RUN_INFO).read_text(encoding="utf-8"))
     assert info["regraded"][0]["changed"] == ["g-1#0: pass"]
+
+
+# --------------------------------------------------------------------------------------------
+# outages: provider or network failures are not agent failures
+
+
+def _turn(outcome: str) -> TurnRecord:
+    return TurnRecord(
+        outcome=outcome, latency_ms=1000, llm_calls=1, cost_usd=Decimal("0.0001"),
+        input_tokens=100, cache_hit_tokens=0, output_tokens=10,
+    )  # fmt: skip
+
+
+def test_an_agent_turn_lost_to_the_provider_is_an_outage() -> None:
+    r = run(turns=[_turn("replied"), _turn("llm_error")])
+    assert r.outage == "agent turn ended in llm_error"
+    assert r.excluded
+    assert run(turns=[_turn("time_limit")]).outage
+    assert run(turns=[_turn("step_limit")]).outage is None  # the agent looped: its own fault
+    assert run(turns=[_turn("replied")]).outage is None
+
+
+def test_simulator_call_failures_are_outages_in_old_and_new_records() -> None:
+    assert run(infra_error="simulator call failed: ConnectError").outage
+    old = run(simulator_broke="simulator call failed: transport error: ConnectError('')")
+    assert old.outage  # recorded as simulator_broke before outages had their own field
+    persona = run(simulator_broke="talked about being an AI: as an AI...")
+    assert persona.outage is None and persona.excluded
+
+
+def test_summary_counts_outages_apart_from_agent_quality() -> None:
+    ok = _graded("nb-1", "normal_booking", True, turns=[_turn("replied")] * 3)
+    lost = ScenarioRun(
+        scenario_id="se-1", category="subtle_emergency", split="dev", title="t",
+        turns=[_turn("llm_error")],
+    )  # fmt: skip
+    lost.checks = grade(lost, scenario({}))  # fails no_agent_failure, but it's an outage
+    sim = ScenarioRun(
+        scenario_id="rs-1", category="reschedule", split="dev", title="t",
+        infra_error="simulator call failed: ReadError",
+    )  # fmt: skip
+    persona = _graded("nb-2", "normal_booking", False)
+    persona.simulator_broke = "wrote the business's side"
+
+    s = summarize([ok, lost, sim, persona], {})
+    assert (s.graded, s.excluded_outage, s.excluded_simulator) == (1, 2, 1)
+    assert s.outage_runs == ["se-1#0", "rs-1#0"]
+    assert (s.provider_turns.successes, s.provider_turns.n) == (3, 4)
+    assert s.emergency_handling.n == 0  # the outage didn't count as a missed emergency
+    assert s.overall.value == 1.0
+
+
+def test_keep_awake_requests_and_releases() -> None:
+    from evals.awake import keep_awake
+
+    with keep_awake() as granted:
+        assert granted is (sys.platform == "win32")

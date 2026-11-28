@@ -1,8 +1,9 @@
 """Metrics over a run's results (DESIGN section 9). Every rate comes with a Wilson 95% interval,
 because with 15 to 50 scenarios per category the point estimate alone overstates what we know.
 
-Runs where the simulated customer broke character, or the harness itself failed, are excluded
-from every rate and counted separately.
+Runs where the simulated customer broke character, the harness itself failed, or the provider or
+network failed (an outage) are excluded from every rate and counted separately. Outages are about
+infrastructure, not the agent's decisions: they get their own reliability number instead.
 """
 
 import math
@@ -14,7 +15,7 @@ from typing import Any
 
 from app.domain.enums import EscalationReason, EscalationSource
 from evals.graders import SAFETY_TEXTS
-from evals.results import ScenarioRun
+from evals.results import INFRA_OUTCOMES, ScenarioRun
 from evals.scenario import (
     EMERGENCY_CATEGORIES,
     TASK_CATEGORIES,
@@ -80,6 +81,10 @@ class Summary:
     graded: int
     excluded_simulator: int
     excluded_harness: int
+    excluded_outage: int
+    # Agent turns that got an answer from the provider in time, over all agent turns of all runs.
+    provider_turns: Rate
+    outage_runs: list[str]  # "scenario#repeat", to re-run
     overall: Rate
     by_category: dict[str, Rate]
     task_success: Rate
@@ -175,8 +180,17 @@ def summarize(runs: list[ScenarioRun], scenarios: dict[str, Scenario]) -> Summar
     return Summary(
         runs=len(runs),
         graded=len(graded),
-        excluded_simulator=sum(1 for r in runs if r.simulator_broke and not r.harness_error),
+        excluded_simulator=sum(
+            1 for r in runs if r.simulator_broke and not r.harness_error and not r.outage
+        ),
         excluded_harness=sum(1 for r in runs if r.harness_error),
+        excluded_outage=sum(1 for r in runs if r.outage and not r.harness_error),
+        provider_turns=Rate.of(
+            t.outcome not in INFRA_OUTCOMES for r in runs for t in r.turns if t.outcome
+        ),
+        outage_runs=[
+            f"{r.scenario_id}#{r.repeat}" for r in runs if r.outage and not r.harness_error
+        ],
         overall=rate(lambda r: r.passed, graded),
         by_category=by_category,
         task_success=rate(lambda r: r.passed, [r for r in graded if r.category in TASK_CATEGORIES]),

@@ -137,6 +137,7 @@ async def _converse(
         message = await customer.next_message(run.exchanges)
     run.end_reason = customer.end_reason
     run.simulator_broke = customer.broke
+    run.infra_error = customer.infra
     run.sim_calls = customer.calls
     run.sim_cost_usd = customer.cost_usd
 

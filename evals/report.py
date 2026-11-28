@@ -74,7 +74,8 @@ def render(summary: Summary, info: dict[str, Any]) -> str:
         ]
     lines += [
         f"{s.runs} runs: {s.graded} graded, {s.excluded_simulator} excluded because the "
-        f"simulated customer broke character, {s.excluded_harness} harness errors.",
+        f"simulated customer broke character, {s.excluded_outage} excluded because the provider "
+        f"or network failed, {s.excluded_harness} harness errors.",
         "",
         "## Headline metrics",
         "",
@@ -120,6 +121,20 @@ def render(summary: Summary, info: dict[str, Any]) -> str:
         lines.append(f"| {category} | {rate} | {target} |")
     lines.append("")
 
+    if s.outage_runs:
+        ids = sorted({run.split("#")[0] for run in s.outage_runs})
+        lines += [
+            "## Outages",
+            "",
+            f"{len(s.outage_runs)} runs hit a provider or network failure and are excluded. Agent "
+            f"turns answered in time: {s.provider_turns}. Every affected customer got the fixed "
+            "fallback reply (D-031). Re-run them with:",
+            "",
+            "```",
+            "python -m evals run " + " ".join(f"--id {i}" for i in ids),
+            "```",
+            "",
+        ]
     if s.emergency_misses:
         lines += ["## Emergency misses", ""] + [f"- {i}" for i in s.emergency_misses] + [""]
     if s.lookalike_false_positives:

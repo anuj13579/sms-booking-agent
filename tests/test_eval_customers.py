@@ -99,12 +99,13 @@ async def test_breaking_character_is_flagged() -> None:
     assert c.broke and "AI" in c.broke
 
 
-async def test_a_failed_simulator_call_is_a_simulator_failure() -> None:
+async def test_a_failed_simulator_call_is_an_outage_not_a_broken_persona() -> None:
     c = simulated(FakeProvider([LLMError("timeout", retryable=True)]))
     c.opening()
     assert await c.next_message([ex("hi", "What's wrong?")]) is None
     assert c.end_reason == "sim_error"
-    assert c.broke
+    assert c.infra and c.infra.startswith("simulator call failed")
+    assert c.broke is None
 
 
 def test_break_detection() -> None:
